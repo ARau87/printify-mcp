@@ -91,17 +91,13 @@ function bucketsFor(path: string): readonly Bucket[];
 interface RateLimiter {
   /**
    * Resolves when the request may be sent. Rejects with a `PrintifyApiError` when the wait would
-   * exceed `maxWaitMs`, and with `signal.reason` when `signal` aborts first.
+   * exceed `MAX_WAIT_MS`, and with `signal.reason` when `signal` aborts first.
    */
   acquire(route: Route, signal: AbortSignal): Promise<void>;
 }
 
-function createRateLimiter(options?: {
-  /** Monotonic milliseconds. Defaults to `performance.now()`. */
-  now?: () => number;
-  limits?: typeof RATE_LIMITS;
-  maxWaitMs?: number;
-}): RateLimiter;
+/** A limiter with `RATE_LIMITS` and `MAX_WAIT_MS`. It starts no timers until a request waits. */
+function createRateLimiter(): RateLimiter;
 ```
 
 ### Buckets
@@ -126,14 +122,14 @@ will be, sent.
    times or more, the next free time is also at least `times[length - limit] + windowMs`, which is
    when the oldest of the last `limit` slots leaves the window.
 3. The request's slot time `t` is the latest of `now` and the next free time of each of its buckets.
-4. If `t - now` exceeds `maxWaitMs`, the limiter reserves nothing and throws the fail-fast error.
+4. If `t - now` exceeds `MAX_WAIT_MS`, the limiter reserves nothing and throws the fail-fast error.
 5. Otherwise `t` is appended to each of the request's buckets, and `acquire` sleeps for `t - now`,
    or resolves at once when that is 0.
 
 Slot times never decrease within a bucket, so rule 2 caps every window of `windowMs` at `limit`
 slots. Requests leave in the order they arrive. A request that waits for the `catalog` bucket also
 holds a future `global` slot, so a plain request that arrives after it waits behind it. That wait
-is at most `maxWaitMs`, because no slot is ever reserved further ahead.
+is at most `MAX_WAIT_MS`, because no slot is ever reserved further ahead.
 
 - **Every sent request counts**, whatever its outcome, because Printify counts it too. A slot is
   never given back after the request is sent.
@@ -142,7 +138,8 @@ is at most `maxWaitMs`, because no slot is ever reserved further ahead.
   its buckets and rejects with `signal.reason`. Requests queued behind it keep their slot times.
   That is safe, just not as early as they could be.
 - **Clock:** `performance.now()`. It is monotonic, so a change to the system clock cannot block
-  requests or let a burst through. Vitest's fake timers fake it by default.
+  requests or let a burst through. It is not injected: Vitest's fake timers fake it by default,
+  together with the `setTimeout` that `sleep` uses, so tests move both with one call.
 - **Timeout:** the client's signal combines the timeout and the caller's signal, so a wait counts
   toward the request's timeout. With the default of 30 s and at most 10 s of waiting, that only
   matters for a short per-request `timeoutMs`, which then ends as kind `timeout`.
@@ -195,12 +192,7 @@ function shouldRetry(method: HttpMethod, outcome: Outcome): boolean;
 function parseRetryAfter(header: string | null, nowMs: number): number | undefined;
 
 /** The wait before retry `retry` (1 or 2): `Retry-After` if valid, else backoff. */
-function retryDelayMs(
-  retry: number,
-  retryAfter: string | null,
-  random?: () => number,
-  nowMs?: number,
-): number;
+function retryDelayMs(retry: number, retryAfter: string | null, random?: () => number): number;
 ```
 
 ### What is retried
@@ -226,11 +218,12 @@ function retryDelayMs(
 
 ### Delay
 
-- **`Retry-After`:** a value of digits only is that many seconds, 0 included. Any other value is
-  read with `Date.parse` as an HTTP date. A valid date gives the time until it, or 0 for a date in
-  the past. Surrounding whitespace is ignored. Anything else, e.g. `-5`, `1.5` or `soon`, is
-  invalid and falls back to backoff. An HTTP date needs the wall clock, so `nowMs` defaults to
-  `Date.now()`.
+- **`Retry-After`:** a value of digits only is that many seconds, 0 included. A value that starts
+  with a day name (`Mon` to `Sun`, as all three HTTP date formats in RFC 9110 do) is read with
+  `Date.parse`. A valid date gives the time until it, or 0 for a date in the past. Surrounding
+  whitespace is ignored. Anything else, e.g. `-5`, `1.5` or `soon`, is invalid and falls back to
+  backoff. The day-name check is needed because V8's `Date.parse` reads `-5` and `1.5` as dates.
+  `retryDelayMs` passes `Date.now()`, the wall clock an HTTP date needs.
 - **Backoff:** `1000 × 2^(retry - 1) × (0.5 + random() × 0.5)`, with `random` defaulting to
   `Math.random`. That is 0.5–1 s before the second attempt and 1–2 s before the third.
 - **Too long:** if the delay exceeds `MAX_WAIT_MS` (e.g. `Retry-After: 120`), there is no retry.
@@ -308,7 +301,7 @@ with `vi.advanceTimersByTimeAsync`.
 
 - Every row of the retry table, method by method, including **no retry for POST on 502**.
 - `parseRetryAfter`: `"5"`, `" 0 "`, an HTTP date in the future and in the past, and the invalid
-  values `-5`, `1.5`, `soon` and an empty string.
+  values `-5`, `1.5`, `soon`, `Sunday, maybe` and an empty string.
 - `retryDelayMs`: backoff with `random` returning 0 and just under 1, for retry 1 and 2;
   `Retry-After` wins over backoff.
 
