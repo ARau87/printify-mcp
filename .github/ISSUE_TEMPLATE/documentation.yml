@@ -1,7 +1,7 @@
 name: Documentation
 description: Report missing, wrong, outdated or confusing documentation.
-title: "[Docs]: "
-labels: ["documentation"]
+title: '[Docs]: '
+labels: ['documentation']
 body:
   - type: markdown
     attributes:

@@ -15,6 +15,8 @@
     "build": "tsc -p tsconfig.build.json",
     "dev": "tsc -p tsconfig.build.json --watch",
     "typecheck": "tsc --noEmit",
+    "lint": "eslint . && prettier --check .",
+    "format": "prettier --write .",
     "test": "vitest run",
     "test:live": "node -e \"console.error('Live test suite not implemented yet — see #20'); process.exit(1)\""
   },
@@ -23,8 +25,13 @@
     "zod": "^4.2.0"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.0",
     "@types/node": "^22.0.0",
+    "eslint": "^10.0.0",
+    "eslint-config-prettier": "^10.1.0",
+    "prettier": "^3.0.0",
     "typescript": "~6.0.3",
+    "typescript-eslint": "^8.70.0",
     "vitest": "^5.0.0"
   }
 }

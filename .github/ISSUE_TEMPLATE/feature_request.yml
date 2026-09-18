@@ -1,7 +1,7 @@
 name: Feature request
 description: Suggest a new tool, a new Printify API capability, or an improvement to existing behavior.
-title: "[Feature]: "
-labels: ["enhancement"]
+title: '[Feature]: '
+labels: ['enhancement']
 body:
   - type: markdown
     attributes:
