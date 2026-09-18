@@ -46,6 +46,10 @@ jobs:
             '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}' \
             | timeout 10 node dist/index.js)
           echo "$output"
+          if grep -v '^{' <<<"$output"; then
+            echo "non-protocol output on stdout" >&2
+            exit 1
+          fi
           grep -q '"name":"printify-mcp"' <<<"$output"
           grep -q '"tools":\[\]' <<<"$output"
       - name: Check --version
