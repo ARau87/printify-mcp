@@ -2,6 +2,7 @@ import { realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { delimiter, isAbsolute, join, sep } from 'node:path';
 import { z } from 'zod';
+import { redactJwts } from './redact.js';
 import { Secret } from './secret.js';
 import { closest } from './suggest.js';
 import { TOOLSETS, isToolset, type Toolset } from './toolsets.js';
@@ -29,14 +30,6 @@ export type ConfigResult =
 
 const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
 
-// Printify Personal Access Tokens are JWTs. A token pasted into the wrong variable while
-// PRINTIFY_API_TOKEN is left empty would otherwise be echoed in full in that variable's error.
-const JWT_PATTERN = /eyJ[\w-]*\.[\w-]*\.[\w-]*/g;
-
-function redactJwts(message: string): string {
-  return message.replace(JWT_PATTERN, '[redacted]');
-}
-
 /** A trimmed variable; an empty value counts as unset. */
 const variable = z
   .string()
@@ -58,12 +51,21 @@ function flag(name: string) {
 
 const envSchema = z.object({
   PRINTIFY_API_TOKEN: variable.transform((value, ctx) => {
-    if (value !== undefined) return new Secret(value);
-    ctx.addIssue(
-      'PRINTIFY_API_TOKEN is required. Create a Personal Access Token in Printify and set it in ' +
-        'your MCP client config: https://developers.printify.com/#authentication',
-    );
-    return z.NEVER;
+    if (value === undefined) {
+      ctx.addIssue(
+        'PRINTIFY_API_TOKEN is required. Create a Personal Access Token in Printify and set it in ' +
+          'your MCP client config: https://developers.printify.com/#authentication',
+      );
+      return z.NEVER;
+    }
+    // Never echo the value: a header-breaking character is still part of the token.
+    if (/[^\x21-\x7e]/.test(value)) {
+      ctx.addIssue(
+        'PRINTIFY_API_TOKEN must contain only visible ASCII characters, with no spaces or line breaks',
+      );
+      return z.NEVER;
+    }
+    return new Secret(value);
   }),
 
   PRINTIFY_SHOP_ID: variable.transform((value, ctx) => {
@@ -133,7 +135,14 @@ const envSchema = z.object({
       ctx.addIssue('PRINTIFY_API_BASE_URL must not contain credentials, a query or a fragment');
       return z.NEVER;
     }
-    return `${url.origin}${url.pathname}`.replace(/\/+$/, '');
+    const pathname = url.pathname.replace(/\/+$/, '');
+    if (/\/v[12]$/i.test(pathname)) {
+      ctx.addIssue(
+        'PRINTIFY_API_BASE_URL must not end in /v1 or /v2; the server adds the API version itself',
+      );
+      return z.NEVER;
+    }
+    return `${url.origin}${pathname}`;
   }),
 });
 
@@ -192,6 +201,7 @@ export function loadConfig(env: Env): ConfigResult {
   if (!parsed.success) {
     // A token pasted into the wrong variable would otherwise be echoed in that variable's error.
     // The truthiness check matters: replaceAll('', …) would insert between every character.
+    // redactJwts covers a token pasted into another variable while PRINTIFY_API_TOKEN is empty.
     const token = env.PRINTIFY_API_TOKEN?.trim();
     const errors = parsed.error.issues.map((issue) => {
       const message = token ? issue.message.replaceAll(token, '[redacted]') : issue.message;
