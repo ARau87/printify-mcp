@@ -125,7 +125,8 @@ describe('createPrintifyClient: successful requests', () => {
     ).resolves.toEqual({ id: 'abc' });
     expect(requests[0]?.method).toBe('POST');
     expect(requests[0]?.body).toBe('{"title":"Shirt","tags":["cat"]}');
-    // Pins the shape #4 wraps: a URL string and a plain init object.
+    // Pins the shape the injected `fetch` (and #6's fake) receives:
+    // a URL string and a plain init object.
     expect(fetch).toHaveBeenCalledWith(
       'https://api.printify.com/v1/shops/12/products.json',
       expect.objectContaining({
