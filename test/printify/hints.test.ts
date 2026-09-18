@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { hintFor, scopeFor, type HintInput } from '../../src/printify/hints.js';
+import { formatSeconds, hintFor, scopeFor, type HintInput } from '../../src/printify/hints.js';
 import type { HttpMethod } from '../../src/printify/types.js';
 
 function http(status: number, code?: number, method: HttpMethod = 'GET', path = '/v1/shops.json') {
@@ -27,6 +27,17 @@ describe('hintFor', () => {
     [599, 'Printify had a server error'],
   ])('explains HTTP %i', (status, text) => {
     expect(hintFor(http(status))).toContain(text);
+  });
+
+  it('gives the wait on a 429 that the rate limiter never sent', () => {
+    expect(hintFor({ ...http(429), retryAfterSeconds: 60 })).toBe(
+      "Printify's rate limit is used up, so the request was not sent. Wait 60 seconds before " +
+        'trying again.',
+    );
+    expect(hintFor({ ...http(429), retryAfterSeconds: 840 })).toBe(
+      "Printify's rate limit is used up, so the request was not sent. Wait 14 minutes before " +
+        'trying again.',
+    );
   });
 
   it('prefers the code hint over the status hint', () => {
@@ -99,5 +110,17 @@ describe('scopeFor', () => {
     ['GET', '/v1/something-new.json'],
   ] as const)('%s %s has no known scope', (method, path) => {
     expect(scopeFor(method, path)).toBeUndefined();
+  });
+});
+
+describe('formatSeconds', () => {
+  it.each([
+    [11, '11 seconds'],
+    [119, '119 seconds'],
+    [120, '2 minutes'],
+    [121, '3 minutes'],
+    [1800, '30 minutes'],
+  ])('formats %i as %s', (seconds, text) => {
+    expect(formatSeconds(seconds)).toBe(text);
   });
 });

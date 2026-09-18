@@ -7,6 +7,8 @@ export interface HintInput {
   path: string;
   status: number | undefined;
   code: number | undefined;
+  /** Set only on the rate limiter's fail-fast error, which was never sent. */
+  retryAfterSeconds?: number | undefined;
 }
 
 const DUPLICATE_ORDER =
@@ -56,6 +58,13 @@ const SCOPES: readonly (readonly [RegExp, string, string | undefined])[] = [
   [/^\/v1\/shops\/[^/]+\/webhooks[/.]/, 'webhooks.read', 'webhooks.write'],
 ];
 
+/** A wait of more than 10 seconds, for messages: seconds under 2 minutes, else whole minutes. */
+export function formatSeconds(seconds: number): string {
+  return seconds < 120
+    ? `${String(seconds)} seconds`
+    : `${String(Math.ceil(seconds / 60))} minutes`;
+}
+
 /** The token scope the endpoint probably needs, or `undefined` when it is not known. */
 export function scopeFor(method: HttpMethod, path: string): string | undefined {
   for (const [pattern, readScope, writeScope] of SCOPES) {
@@ -80,7 +89,7 @@ export function hintFor(error: HintInput): string | undefined {
   }
 }
 
-function statusHint({ status, method, path }: HintInput): string | undefined {
+function statusHint({ status, method, path, retryAfterSeconds }: HintInput): string | undefined {
   if (status === undefined) return undefined;
   if (status === 409) return DUPLICATE_ORDER;
   if (status === 401) return UNAUTHORIZED;
@@ -93,7 +102,13 @@ function statusHint({ status, method, path }: HintInput): string | undefined {
     );
   }
   if (status === 404) return NOT_FOUND;
-  if (status === 429) return RATE_LIMITED;
+  if (status === 429) {
+    if (retryAfterSeconds === undefined) return RATE_LIMITED;
+    return (
+      "Printify's rate limit is used up, so the request was not sent. " +
+      `Wait ${formatSeconds(retryAfterSeconds)} before trying again.`
+    );
+  }
   if (status >= 500 && status <= 599) return SERVER_ERROR;
   return undefined;
 }
