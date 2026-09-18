@@ -81,6 +81,7 @@ function loadConfig(env: Readonly<Record<string, string | undefined>>): ConfigRe
   to `errors`. Zod 4 does not copy input values into issues unless asked, so the token never reaches
   an issue. Zod's default object parsing ignores the other environment variables.
 - The only I/O is the synchronous file-system check of `PRINTIFY_UPLOAD_DIRS`.
+- `config.ts` also exports `DEFAULT_API_BASE_URL` and the `Env` type, which `cli.ts` uses.
 
 ### General rules
 
@@ -89,6 +90,8 @@ function loadConfig(env: Readonly<Record<string, string | undefined>>): ConfigRe
   often leave `""` in place.
 - Messages quote the offending value, except for `PRINTIFY_API_TOKEN` and `PRINTIFY_API_BASE_URL`.
   A URL can contain credentials, so its value is never echoed.
+- If the token's value appears in another variable's error, because the user pasted it into the
+  wrong variable, it is replaced with `[redacted]`. An empty token is not used for this replacement.
 
 ### Variables
 
@@ -117,7 +120,8 @@ your MCP client config: https://developers.printify.com/#authentication`
 
 - A comma-separated list. Entries are trimmed and lowercased. Empty entries (a trailing comma) are
   skipped, and duplicates are allowed.
-- Each unknown entry is its own error, with a suggestion when one is close:
+- Each unknown entry is its own error, with a suggestion when one is close. The error quotes the
+  entry as written, before lower-casing, so token redaction still matches it:
   `PRINTIFY_TOOLSETS: unknown toolset "prodcts" (did you mean "products"?). Valid toolsets: shops,
 catalog, uploads, products, publishing, personalization, orders, support, webhooks, workflows`
 - A value that names no toolset at all (for example `,`) is an error:
@@ -138,6 +142,8 @@ catalog, uploads, products, publishing, personalization, orders, support, webhoo
   - `PRINTIFY_UPLOAD_DIRS: "pics" is not an absolute path`
   - `PRINTIFY_UPLOAD_DIRS: "/Users/me/pics" does not exist`
   - `PRINTIFY_UPLOAD_DIRS: "/Users/me/pic.png" is not a directory`
+  - Any other `stat` failure: `PRINTIFY_UPLOAD_DIRS: "/Users/me/pics" cannot be read (EACCES)`
+- `ENOENT` and `ENOTDIR` both count as "does not exist".
 - Entries are stored as `fs.realpathSync` results, in order, with duplicates removed. #10 checks that
   a file is inside one of them, and real paths keep symlinks from escaping that check.
 - `[]` means local-file uploads are disabled. Uploads by URL or base64 still work.
@@ -175,7 +181,8 @@ PRINTIFY_ENABLE_ORDERS?)`. Otherwise it lists the known variables:
   `console.error(config)`, `JSON.stringify(config)` and template strings never contain the token.
 - **`toolsets.ts`:** `TOOLSETS = ['shops', 'catalog', 'uploads', 'products', 'publishing',
 'personalization', 'orders', 'support', 'webhooks', 'workflows'] as const` and
-  `type Toolset = (typeof TOOLSETS)[number]`. #2 needs the list to validate names, and #5 imports it.
+  `type Toolset = (typeof TOOLSETS)[number]`, plus the type guard
+  `isToolset(name: string): name is Toolset`. #2 needs the list to validate names, and #5 imports it.
 - **`suggest.ts`:** `editDistance(a, b)` (Levenshtein) and
   `closest(input, candidates, maxDistance = 3): string | undefined`. Used for toolset names and
   variable names.
@@ -184,8 +191,9 @@ PRINTIFY_ENABLE_ORDERS?)`. Otherwise it lists the known variables:
 
 ### Flags
 
-`main` parses `argv` with `util.parseArgs` in strict mode, before it loads the configuration, so both
-flags work without a token.
+`main` parses `argv` with `util.parseArgs` before it loads the configuration, so both flags work
+without a token. It uses `parseArgs` in tokens mode and checks each token itself, so its messages
+name the exact option as typed and not Node's generic wording.
 
 | Input                           | Output                                                                             | Exit |
 | ------------------------------- | ---------------------------------------------------------------------------------- | ---- |
@@ -195,7 +203,8 @@ flags work without a token.
 | unknown option, or a positional | stderr: `printify-mcp: unknown option '--foo'. Run printify-mcp --help for usage.` | 2    |
 | none                            | Load config and serve (see below)                                                  | —    |
 
-For a positional argument the message reads `unexpected argument 'foo'` instead.
+For a positional argument the message reads `unexpected argument 'foo'` instead, and for a flag with
+a value (`--help=yes`) it reads `option '--help' does not take a value`.
 
 The help text has a one-line description, `Usage: printify-mcp [--help] [--version]`, a table of
 the seven variables (name, required or default, meaning), the valid toolset names and a link to
@@ -221,8 +230,8 @@ and usage errors (2) can be told apart.
 
 1. Print the warnings to stderr.
 2. Call `serve(createServer, { onerror })`. `onerror` logs `printify-mcp: error: <message>` to stderr.
-3. Print one summary line to stderr with the logger's `info`. MCP clients such as Claude Desktop save stderr in their log
-   files, so this is what a user sees when debugging:
+3. Print one summary line to stderr with the logger's `info`. MCP clients such as Claude Desktop
+   save stderr in their log files, so this is what a user sees when debugging:
 
 ```
 printify-mcp: 0.1.0 on stdio (toolsets: all; orders: off; destructive: off; default shop: none; upload dirs: 0)
@@ -333,8 +342,8 @@ All tests run under `npm test`. None needs the network or a Printify account.
 - Unknown-variable warnings with a suggestion, without one, and for a lowercase name. Variables
   without the `PRINTIFY_` prefix are ignored. An `env` `Proxy` with case-insensitive lookups, which
   behaves like Windows, produces no warning for `Printify_Api_Token`.
-- **Token leak:** a distinctive token combined with several invalid variables. The token must not
-  appear in any error or warning. On a valid configuration it must not appear in
+- **Token leak:** a distinctive mixed-case token, also pasted into every other variable. It must not
+  appear in any error or warning, in its original case or lower-cased. On a valid configuration it must not appear in
   `String(config.token)`, `JSON.stringify(config)` or `util.inspect(config)`.
 
 ### `test/secret.test.ts`
@@ -362,8 +371,10 @@ Edit distance on known pairs. `closest` returns the nearest candidate within the
 
 ### `test/server.test.ts` (updated)
 
+Two tests:
+
 - `initialize` returns `serverInfo` with the name and version from `package.json`, which the test
-  reads itself.
+  reads itself, and `capabilities.tools.listChanged: false`.
 - After `notifications/initialized`, `tools/list` returns `{ tools: [] }`.
 
 ## CI
@@ -377,7 +388,21 @@ The smoke steps in `.github/workflows/ci.yml` run against the built `dist/index.
 2. **Check --version.** The output of `node dist/index.js --version` equals the `version` in
    `package.json`.
 3. **Check that a missing token stops startup.** With no token and stdin from `/dev/null`, the
-   process exits non-zero and its stderr contains `PRINTIFY_API_TOKEN`.
+   process exits non-zero and its stderr, captured in `$RUNNER_TEMP/stderr.txt`, contains
+   `PRINTIFY_API_TOKEN`.
+
+### MCP Inspector
+
+The acceptance criterion names the MCP Inspector. Its CLI takes the server command first, then the
+options. It does not pass its own environment to the server, so the token goes in with `-e`:
+
+```sh
+npx @modelcontextprotocol/inspector --cli node dist/index.js \
+  -e PRINTIFY_API_TOKEN=inspector-dummy --protocol-era legacy --method tools/list
+```
+
+A prototype run on 2026-09-18 with Inspector 2.7.0 printed `{ "tools": [] }` for both
+`--protocol-era legacy` and `--protocol-era modern`. That confirms `serveStdio` serves both eras.
 
 ## Acceptance criteria mapping
 
