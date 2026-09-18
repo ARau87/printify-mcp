@@ -1,3 +1,6 @@
+import { realpathSync, statSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { delimiter, isAbsolute, join, sep } from 'node:path';
 import { z } from 'zod';
 import { Secret } from './secret.js';
 import { closest } from './suggest.js';
@@ -89,6 +92,20 @@ const envSchema = z.object({
   PRINTIFY_ENABLE_ORDERS: flag('PRINTIFY_ENABLE_ORDERS'),
   PRINTIFY_ENABLE_DESTRUCTIVE: flag('PRINTIFY_ENABLE_DESTRUCTIVE'),
 
+  PRINTIFY_UPLOAD_DIRS: variable.transform((value, ctx): readonly string[] => {
+    if (value === undefined) return [];
+    const dirs: string[] = [];
+    const errors: string[] = [];
+    for (const entry of value.split(delimiter).map((part) => part.trim())) {
+      if (entry === '') continue;
+      const result = resolveUploadDir(entry);
+      if (result.ok) dirs.push(result.dir);
+      else errors.push(result.error);
+    }
+    for (const error of errors) ctx.addIssue(error);
+    return errors.length > 0 ? z.NEVER : [...new Set(dirs)];
+  }),
+
   PRINTIFY_API_BASE_URL: variable.transform((value, ctx) => {
     if (value === undefined) return DEFAULT_API_BASE_URL;
     // The value is never echoed: a URL can carry credentials.
@@ -112,6 +129,32 @@ const envSchema = z.object({
   }),
 });
 
+function resolveUploadDir(entry: string): { ok: true; dir: string } | { ok: false; error: string } {
+  const path = expandHome(entry);
+  if (!isAbsolute(path)) {
+    return { ok: false, error: `PRINTIFY_UPLOAD_DIRS: "${entry}" is not an absolute path` };
+  }
+  try {
+    if (!statSync(path).isDirectory()) {
+      return { ok: false, error: `PRINTIFY_UPLOAD_DIRS: "${entry}" is not a directory` };
+    }
+    return { ok: true, dir: realpathSync(path) };
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    const problem =
+      code === 'ENOENT' || code === 'ENOTDIR'
+        ? 'does not exist'
+        : `cannot be read (${code ?? 'unknown error'})`;
+    return { ok: false, error: `PRINTIFY_UPLOAD_DIRS: "${entry}" ${problem}` };
+  }
+}
+
+function expandHome(entry: string): string {
+  if (entry === '~') return homedir();
+  if (entry.startsWith('~/') || entry.startsWith(`~${sep}`)) return join(homedir(), entry.slice(2));
+  return entry;
+}
+
 /**
  * Reads and validates the configuration from `env`. Never throws and never reads `process.env`
  * itself. All problems are collected; warnings are returned whether or not the config is valid.
@@ -131,7 +174,7 @@ export function loadConfig(env: Env): ConfigResult {
       toolsets: data.PRINTIFY_TOOLSETS,
       enableOrders: data.PRINTIFY_ENABLE_ORDERS,
       enableDestructive: data.PRINTIFY_ENABLE_DESTRUCTIVE,
-      uploadDirs: [],
+      uploadDirs: data.PRINTIFY_UPLOAD_DIRS,
       apiBaseUrl: data.PRINTIFY_API_BASE_URL,
     },
   };

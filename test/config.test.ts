@@ -1,5 +1,9 @@
+import { randomUUID } from 'node:crypto';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
+import { delimiter, join } from 'node:path';
 import { inspect } from 'node:util';
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { loadConfig, type Config, type ConfigResult, type Env } from '../src/config.js';
 
 // Mixed case on purpose: some values are lower-cased, and the token must not leak through them.
@@ -180,6 +184,62 @@ describe('loadConfig', () => {
     ])('rejects %s', (value) => {
       expect(errorsOf(load({ PRINTIFY_API_BASE_URL: value }))).toEqual([
         'PRINTIFY_API_BASE_URL must not contain credentials, a query or a fragment',
+      ]);
+    });
+  });
+
+  describe('PRINTIFY_UPLOAD_DIRS', () => {
+    let root: string;
+
+    beforeEach(() => {
+      // realpath: on macOS the temp dir is itself behind a symlink (/var -> /private/var).
+      root = realpathSync(mkdtempSync(join(tmpdir(), 'printify-mcp-config-')));
+    });
+
+    afterEach(() => {
+      rmSync(root, { recursive: true, force: true });
+    });
+
+    it('splits on the path delimiter, trims entries, skips empty ones and keeps the order', () => {
+      const first = join(root, 'first');
+      const second = join(root, 'second');
+      mkdirSync(first);
+      mkdirSync(second);
+      const value = `${second}${delimiter}${delimiter} ${first} `;
+      expect(configOf(load({ PRINTIFY_UPLOAD_DIRS: value })).uploadDirs).toEqual([second, first]);
+    });
+
+    it('stores real paths and removes duplicates', () => {
+      const real = join(root, 'real');
+      const link = join(root, 'link');
+      mkdirSync(real);
+      symlinkSync(real, link);
+      const value = `${link}${delimiter}${real}`;
+      expect(configOf(load({ PRINTIFY_UPLOAD_DIRS: value })).uploadDirs).toEqual([real]);
+    });
+
+    it('expands ~ to the home directory', () => {
+      expect(configOf(load({ PRINTIFY_UPLOAD_DIRS: '~' })).uploadDirs).toEqual([
+        realpathSync(homedir()),
+      ]);
+    });
+
+    it('reports a missing directory under ~', () => {
+      const value = `~/printify-mcp-missing-${randomUUID()}`;
+      expect(errorsOf(load({ PRINTIFY_UPLOAD_DIRS: value }))).toEqual([
+        `PRINTIFY_UPLOAD_DIRS: "${value}" does not exist`,
+      ]);
+    });
+
+    it('reports every bad entry', () => {
+      const missing = join(root, 'missing');
+      const file = join(root, 'pic.png');
+      writeFileSync(file, '');
+      const value = ['pics', missing, file, root].join(delimiter);
+      expect(errorsOf(load({ PRINTIFY_UPLOAD_DIRS: value }))).toEqual([
+        'PRINTIFY_UPLOAD_DIRS: "pics" is not an absolute path',
+        `PRINTIFY_UPLOAD_DIRS: "${missing}" does not exist`,
+        `PRINTIFY_UPLOAD_DIRS: "${file}" is not a directory`,
       ]);
     });
   });
