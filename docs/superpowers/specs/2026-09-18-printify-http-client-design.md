@@ -83,9 +83,10 @@ src/
   redact.ts                # new: redactJwts (moved from config.ts) and redactValues
   config.ts                # rejects /v1 and /v2, imports redactJwts
   printify/
+    types.ts               # HttpMethod, PrintifyErrorKind
     path.ts                # apiPath tagged template, ApiPath type
-    errors.ts              # PrintifyApiError, error-body parsing
     hints.ts               # hint table, scope guess
+    errors.ts              # PrintifyApiError, error-body parsing, error factories
     client.ts              # createPrintifyClient, request pipeline
     pagination.ts          # PAGE_LIMITS, fetchPage, Page
 test/
@@ -94,12 +95,14 @@ test/
   printify/
     path.test.ts
     hints.test.ts
+    errors.test.ts
     client.test.ts
     pagination.test.ts
 ```
 
 No new dependencies. The vitest glob `test/**/*.test.ts` already includes `test/printify/`. There
-is no barrel file: callers import from the module they need.
+is no barrel file: callers import from the module they need. `types.ts` holds the two type aliases
+that `hints.ts` and `errors.ts` both need, so neither imports the other's types in a cycle.
 
 ## Paths
 
@@ -162,12 +165,16 @@ function createPrintifyClient(options: PrintifyClientOptions): PrintifyClient;
    values. It is built by concatenation: `new URL(path, baseUrl)` would drop a proxy path prefix
    such as `/printify`.
 3. Headers, on every request:
-   - `Authorization: Bearer <token>`. This is the only call to `token.reveal()` in the codebase.
+   - `Authorization: Bearer <token>`. `createPrintifyClient` calls `token.reveal()` once, when the
+     client is created, for this header and for redaction. It is the only call in the codebase.
    - `User-Agent: printify-mcp/<version>`, with the version from `package-info.ts`.
    - `Content-Type: application/json;charset=utf-8`.
 4. The body is `JSON.stringify(body)` when `body` is not `undefined`.
 5. `fetch` gets `signal: AbortSignal.any([AbortSignal.timeout(timeoutMs), callerSignal])`, or just
    the timeout signal when the caller passes none.
+6. `fetch` is called as `fetch(url, init)` with a URL string and a plain `init` object, not with a
+   `Request`. The `fetch` option is read on every request, so it defaults to whatever
+   `globalThis.fetch` is at that moment.
 
 ### Response
 
@@ -196,10 +203,12 @@ server instance, including the probe instance `serveStdio` may discard. Wiring t
 ### Extension point for #4
 
 Rate limiting and retries (#4) wrap the injected `fetch`, e.g. `withRetry(withRateLimit(fetch))`.
-Everything the wrapper needs is on the `Request` and `Response`: the method (is a retry safe?), the
-URL (catalog or publish bucket), the status and any `Retry-After` header. The client's signal covers
-all attempts, so one tool call never takes longer than its timeout. The fake `fetch` from #6 sits
-below the wrapper. #3 builds none of this.
+Everything the wrapper needs is in its arguments and the `Response`: the method in `init.method` (is
+a retry safe?), the URL string (catalog or publish bucket), the status and any `Retry-After` header.
+The body in `init.body` is a string, so a retry can send it again. The client's signal covers all
+attempts, so one tool call never takes longer than its timeout. The fake `fetch` from #6 sits below
+the wrapper. A fail-fast rate-limit error can be a `new PrintifyApiError(message, fields)`: the
+constructor is public and derives the hint itself. #3 builds none of this.
 
 ## Errors
 
@@ -240,7 +249,8 @@ loose zod schema reads these fields, each optional, so both envelopes and any mi
 
 - A JSON-encoded `reason` stays a string. The model can read it.
 - A body that is not JSON, not an object, or has none of these fields leaves the fields
-  `undefined`. `requestId` still falls back to the header.
+  `undefined`. `requestId` still falls back to the header. A field of the wrong type, or text that
+  is empty or only whitespace, counts as missing.
 - `printifyMessage` and `reason` are cut to 1 000 characters, with `…` at the end when cut.
 - The error never stores the request body, the query, the base URL or the raw response body.
 
@@ -281,8 +291,9 @@ function redactValues(text: string, values: Iterable<string>): string;
 
 - `redactValues` replaces every occurrence of each value, ignoring letter case, with
   `[redacted]`. Values shorter than 3 characters are skipped, so a two-letter country code does not
-  wipe out every `US` in a message. Longer values are replaced first, so a value that contains
-  another is not left half-replaced.
+  wipe out every `US` in a message. It is one regular-expression pass with the longest values
+  first, so a value that contains another is not left half-replaced, and no value is matched
+  inside an earlier `[redacted]`.
 - The values are the token and every string found under an `address_to` key anywhere in the
   request body, at any depth.
 - `redactJwts` then replaces anything JWT-shaped, as `config.ts` already does.
@@ -368,8 +379,8 @@ function fetchPage(
   Other fields are ignored. A body that does not match throws a `PrintifyApiError` of kind
   `invalid_response` with status 200.
 - **`hasMore`:** `current_page < last_page` when `last_page` is present; otherwise
-  `next_page_url !== null` when `next_page_url` is present; otherwise `items.length` equals the
-  limit sent, or 10 when none was sent.
+  `next_page_url !== null` when `next_page_url` is present; otherwise `items.length` is at least
+  the limit sent, or 10 when none was sent.
 - The URL fields are dropped: they are relative and of no use to the model.
 - There is no helper that fetches every page. Tools pass `page` through to the model, and a
   workflow that needs every page loops over `fetchPage` itself.
@@ -386,7 +397,9 @@ path ending in `/v1` or `/v2`, in any letter case, is an error:
 ## Tests
 
 All tests run under `npm test`. None needs the network or a Printify account. The fake `fetch` is a
-`vi.fn` that returns real `Response` objects and records each `Request`.
+`vi.fn` that returns real `Response` objects and records each request. `errors.test.ts` covers body
+parsing, messages, cutting and redaction in detail; `client.test.ts` covers the wiring and checks
+each failure end to end.
 
 ### `test/redact.test.ts`
 
@@ -398,28 +411,42 @@ a shorter one it contains, and handles regex characters in values. `redactJwts` 
 Numbers and strings are inserted; `/`, `?`, `#`, `%` and spaces are encoded; empty, `.` and `..`
 throw; a template that does not start with `/v1/` or `/v2/` throws.
 
+### `test/printify/errors.test.ts`
+
+- **Error bodies:** the documented 8203 body gives `code`, `printifyMessage`, `reason`, the header
+  `requestId` and the 8203 hint; the probed `{error, request_id}` 404 body gives `printifyMessage`
+  and the body's `requestId`; the documented 8103 body keeps its JSON-encoded `reason`; an `errors`
+  object without `reason` is serialised and its `code` used; JSON that is not an object, fields of
+  the wrong type and empty text are ignored.
+- **Messages:** every message form above, and one trailing period removed per piece.
+- **Cutting and redaction:** long text is cut to 1 000 characters; a secret at the cut is redacted
+  before the cut, so no prefix of it survives; the redaction applies to every text field and
+  JWTs are always redacted.
+- **Timeout, network and invalid-response errors:** their messages and hints; a network error
+  keeps its `cause` and names the innermost code.
+
 ### `test/printify/client.test.ts`
 
 - **Success:** the URL, method and all three headers; a proxy base URL keeps its path prefix;
   `undefined` query values are dropped; a POST body arrives as JSON; a 204, an empty 200 and a
   whitespace-only 200 resolve to `undefined`; a JSON body served as `application/octet-stream` is
-  parsed.
+  parsed; the global `fetch` is the default; the default timeout is 30 000 ms.
 - **GET with a body** throws a `TypeError` and never calls `fetch`.
-- **Error bodies:** the documented 8203 body gives `code`, `printifyMessage`, `reason`, the header
-  `requestId` and the 8203 hint; the probed `{error, request_id}` 404 body gives `printifyMessage`
-  and the body's `requestId`; the documented 8103 body keeps its JSON-encoded `reason`; an `errors`
-  object without `reason` is serialised; long text is cut to 1 000 characters.
+- **Error responses:** the documented 8203 body becomes a `PrintifyApiError` with its fields and
+  hint.
 - **Timeouts:** with a real timeout of about 20 ms, because `AbortSignal.timeout` does not follow
   vitest's fake timers. One `fetch` never settles until aborted; one returns headers and then
   stalls the body. Both give kind `timeout`. A per-request `timeoutMs` overrides the default.
-- **Caller abort:** aborting the caller's signal re-throws its reason, not a `PrintifyApiError`.
+- **Caller abort:** aborting the caller's signal re-throws its reason, not a `PrintifyApiError`,
+  both while the request waits and when the signal aborted before it started.
 - **Non-JSON:** an HTML 502 gives kind `http` with `(non-JSON response)`; an HTML 200 gives kind
   `invalid_response`.
 - **Network:** a `fetch` that rejects with `TypeError('fetch failed', { cause })` gives kind
   `network`, keeps `cause`, and names the cause's code in `message`.
 - **Redaction:** Printify echoes the token, a JWT and `address_to` values (name, street, email,
-  phone) back in `message` and `reason`. None of them appears in `message`, any field, or
-  `util.inspect(error)`. The base URL path and the query never appear either.
+  phone), some of them upper-cased, back in `message`, `reason` and `request_id`. None of them
+  appears in `message`, any field, `util.inspect(error)` or `JSON.stringify(error)`. The base URL
+  path and the query never appear either.
 
 ### `test/printify/hints.test.ts`
 
