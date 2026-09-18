@@ -169,12 +169,23 @@ function createPrintifyClient(options: PrintifyClientOptions): PrintifyClient;
      client is created, for this header and for redaction. It is the only call in the codebase.
    - `User-Agent: printify-mcp/<version>`, with the version from `package-info.ts`.
    - `Content-Type: application/json;charset=utf-8`.
-4. The body is `JSON.stringify(body)` when `body` is not `undefined`.
+   - `createPrintifyClient` builds these headers once and checks them with `new Headers(headers)`
+     before returning the client. If that throws (the token contains a character that cannot be
+     sent in an HTTP header, e.g. a line break), `createPrintifyClient` throws
+     `new TypeError('The Printify token contains characters that cannot be sent in an HTTP header')`
+     with no `cause`, so the original error, which contains the token, is dropped. This still
+     creates no timers and opens no connections.
+4. The body is serialised with `JSON.stringify(body)` before the request is sent, right after the
+   GET-body check and before the timeout signal is created. A body that cannot be serialised (a
+   `BigInt`, a cycle) rejects with that `TypeError` directly, not a `PrintifyApiError`, and `fetch`
+   is never called.
 5. `fetch` gets `signal: AbortSignal.any([AbortSignal.timeout(timeoutMs), callerSignal])`, or just
    the timeout signal when the caller passes none.
 6. `fetch` is called as `fetch(url, init)` with a URL string and a plain `init` object, not with a
    `Request`. The `fetch` option is read on every request, so it defaults to whatever
-   `globalThis.fetch` is at that moment.
+   `globalThis.fetch` is at that moment. `init.headers` is a fresh copy of the headers object on
+   every call, so a #4 wrapper that mutates `init.headers` cannot leak the change into later
+   requests.
 
 ### Response
 
@@ -190,6 +201,8 @@ function createPrintifyClient(options: PrintifyClientOptions): PrintifyClient;
 
 - **Caller abort:** if the caller's signal has aborted, its `reason` is re-thrown unchanged. It is
   not a Printify error, and #4 must never retry it.
+- **Pass-through:** otherwise, if the rejection is already a `PrintifyApiError` (e.g. a #4 wrapper's
+  fail-fast rate-limit error), it is re-thrown unchanged.
 - **Timeout:** otherwise, if the timeout signal has aborted, a `PrintifyApiError` of kind `timeout`.
 - **Network:** any other rejection from `fetch` or from reading the body becomes a
   `PrintifyApiError` of kind `network`, with the original error as `cause`.
@@ -205,10 +218,12 @@ server instance, including the probe instance `serveStdio` may discard. Wiring t
 Rate limiting and retries (#4) wrap the injected `fetch`, e.g. `withRetry(withRateLimit(fetch))`.
 Everything the wrapper needs is in its arguments and the `Response`: the method in `init.method` (is
 a retry safe?), the URL string (catalog or publish bucket), the status and any `Retry-After` header.
-The body in `init.body` is a string, so a retry can send it again. The client's signal covers all
-attempts, so one tool call never takes longer than its timeout. The fake `fetch` from #6 sits below
-the wrapper. A fail-fast rate-limit error can be a `new PrintifyApiError(message, fields)`: the
-constructor is public and derives the hint itself. #3 builds none of this.
+The body in `init.body` is a string, so a retry can send it again. `init.headers` is a fresh object
+on every call, so the wrapper can add or change a header for one attempt without it leaking into a
+later request. The client's signal covers all attempts, so one tool call never takes longer than its
+timeout. The fake `fetch` from #6 sits below the wrapper. A fail-fast rate-limit error can be a
+`new PrintifyApiError(message, fields)`: the constructor is public and derives the hint itself, and
+`request` re-throws it unchanged instead of wrapping it as a network error. #3 builds none of this.
 
 ## Errors
 
@@ -250,7 +265,8 @@ loose zod schema reads these fields, each optional, so both envelopes and any mi
 - A JSON-encoded `reason` stays a string. The model can read it.
 - A body that is not JSON, not an object, or has none of these fields leaves the fields
   `undefined`. `requestId` still falls back to the header. A field of the wrong type, or text that
-  is empty or only whitespace, counts as missing.
+  is empty or only whitespace, counts as missing _before_ its row's fallback is applied, not after:
+  `{ message: '  ', error: 'Not found' }` gives `printifyMessage: 'Not found'`, not a blank string.
 - `printifyMessage` and `reason` are cut to 1 000 characters, with `…` at the end when cut.
 - The error never stores the request body, the query, the base URL or the raw response body.
 
@@ -394,6 +410,17 @@ path ending in `/v1` or `/v2`, in any letter case, is an error:
 
 `/printify` and `/v10` are still accepted. The help text does not change.
 
+In the `PRINTIFY_API_TOKEN` transform, after the existing required check, a trimmed value that
+contains any character outside visible ASCII (U+0021–U+007E) — a space, a line break, a NUL or a
+non-ASCII character — is an error, and the value is never echoed:
+
+`PRINTIFY_API_TOKEN must contain only visible ASCII characters, with no spaces or line breaks`
+
+Leading and trailing whitespace is still trimmed and accepted; only a character left over after
+trimming is rejected. This exists because Node's `fetch` rejects an invalid header value with a
+`TypeError` whose message contains the whole `Bearer <token>` value, which would otherwise leak the
+token into a network error's `cause`.
+
 ## Tests
 
 All tests run under `npm test`. None needs the network or a Printify account. The fake `fetch` is a
@@ -418,6 +445,9 @@ throw; a template that does not start with `/v1/` or `/v2/` throws.
   and the body's `requestId`; the documented 8103 body keeps its JSON-encoded `reason`; an `errors`
   object without `reason` is serialised and its `code` used; JSON that is not an object, fields of
   the wrong type and empty text are ignored.
+- **Blank text falls back:** a blank `message` falls back to `error`; a blank `request_id` falls
+  back to the correlation id; a blank `errors.reason` falls back to `JSON.stringify(errors)` and
+  still reads `errors.code`.
 - **Messages:** every message form above, and one trailing period removed per piece.
 - **Cutting and redaction:** long text is cut to 1 000 characters; a secret at the cut is redacted
   before the cut, so no prefix of it survives; the redaction applies to every text field and
@@ -428,10 +458,18 @@ throw; a template that does not start with `/v1/` or `/v2/` throws.
 ### `test/printify/client.test.ts`
 
 - **Success:** the URL, method and all three headers; a proxy base URL keeps its path prefix;
-  `undefined` query values are dropped; a POST body arrives as JSON; a 204, an empty 200 and a
-  whitespace-only 200 resolve to `undefined`; a JSON body served as `application/octet-stream` is
-  parsed; the global `fetch` is the default; the default timeout is 30 000 ms.
-- **GET with a body** throws a `TypeError` and never calls `fetch`.
+  `undefined` query values are dropped; a POST body arrives as JSON, and `fetch` is called with a
+  URL string and a plain `init` object (`method`, `body`, `signal`) that pins the shape #4 wraps; a
+  204, an empty 200 and a whitespace-only 200 resolve to `undefined`; a JSON body served as
+  `application/octet-stream` is parsed; the global `fetch` is the default, proven by creating the
+  client before stubbing the global; the default timeout is 30 000 ms; two requests get two
+  different `init.headers` objects.
+- **Construction:** a token with a character that cannot be sent in an HTTP header (e.g. an inner
+  `\r\n`) makes `createPrintifyClient` throw that `TypeError`; `util.inspect` on the error does not
+  contain the token, and `fetch` is never called.
+- **GET with a body** throws a `TypeError` with exactly that message and never calls `fetch`.
+- **A body that cannot be serialised** (e.g. a `BigInt`) rejects with a `TypeError`, not a
+  `PrintifyApiError`, and never calls `fetch`.
 - **Error responses:** the documented 8203 body becomes a `PrintifyApiError` with its fields and
   hint.
 - **Timeouts:** with a real timeout of about 20 ms, because `AbortSignal.timeout` does not follow
@@ -439,14 +477,16 @@ throw; a template that does not start with `/v1/` or `/v2/` throws.
   stalls the body. Both give kind `timeout`. A per-request `timeoutMs` overrides the default.
 - **Caller abort:** aborting the caller's signal re-throws its reason, not a `PrintifyApiError`,
   both while the request waits and when the signal aborted before it started.
+- **Pass-through:** a `fetch` that rejects with a `PrintifyApiError` (a #4 fail-fast rate-limit
+  error) makes `request` reject with that exact object.
 - **Non-JSON:** an HTML 502 gives kind `http` with `(non-JSON response)`; an HTML 200 gives kind
   `invalid_response`.
 - **Network:** a `fetch` that rejects with `TypeError('fetch failed', { cause })` gives kind
   `network`, keeps `cause`, and names the cause's code in `message`.
 - **Redaction:** Printify echoes the token, a JWT and `address_to` values (name, street, email,
-  phone), some of them upper-cased, back in `message`, `reason` and `request_id`. None of them
-  appears in `message`, any field, `util.inspect(error)` or `JSON.stringify(error)`. The base URL
-  path and the query never appear either.
+  phone, and a nested `gift.address_to.first_name`), some of them upper-cased, back in `message`,
+  `reason` and `request_id`. None of them appears in `message`, any field, `util.inspect(error)` or
+  `JSON.stringify(error)`. The base URL path and the query never appear either.
 
 ### `test/printify/hints.test.ts`
 
@@ -468,7 +508,9 @@ every row of the scope table, including a path with no scope.
 ### `test/config.test.ts` (updated)
 
 `/v1`, `/v2/`, `/V1` and `/printify/v1` are rejected with the new message. `/printify` and `/v10`
-are accepted.
+are accepted. A token with an inner space, an inner `\n`, an inner `\r\n`, an inner NUL or a
+non-ASCII letter is rejected with the new visible-ASCII message, and none of the tokens appears in
+the error; leading and trailing whitespace is still trimmed and accepted.
 
 ## Acceptance criteria mapping
 
