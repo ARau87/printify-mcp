@@ -37,7 +37,24 @@ jobs:
       - run: npm test
       - run: npm run build
       - name: Smoke-run the built server
+        env:
+          PRINTIFY_API_TOKEN: smoke-test-token
         run: |
-          printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ci","version":"0"}}}' \
-            | timeout 10 node dist/index.js \
-            | grep -q '"name":"printify-mcp"'
+          output=$(printf '%s\n' \
+            '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ci","version":"0"}}}' \
+            '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
+            '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}' \
+            | timeout 10 node dist/index.js)
+          echo "$output"
+          grep -q '"name":"printify-mcp"' <<<"$output"
+          grep -q '"tools":\[\]' <<<"$output"
+      - name: Check --version
+        run: test "$(node dist/index.js --version)" = "$(node -p 'require("./package.json").version')"
+      - name: Check that a missing token stops startup
+        run: |
+          if node dist/index.js </dev/null 2>"$RUNNER_TEMP/stderr.txt"; then
+            echo "expected a non-zero exit without PRINTIFY_API_TOKEN" >&2
+            exit 1
+          fi
+          cat "$RUNNER_TEMP/stderr.txt"
+          grep -q PRINTIFY_API_TOKEN "$RUNNER_TEMP/stderr.txt"

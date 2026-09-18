@@ -19,5 +19,10 @@ export default defineConfig(
     files: ['**/*.js'],
     extends: [tseslint.configs.disableTypeChecked],
   },
+  {
+    // stdout carries the MCP protocol; runtime output goes through src/log.ts (stderr).
+    files: ['src/**/*.ts'],
+    rules: { 'no-console': 'error' },
+  },
   prettier,
 );
