@@ -10,6 +10,9 @@ import { loadConfig, type Config, type ConfigResult, type Env } from '../src/con
 const TOKEN = 'Tok-9F8e7D6c5B4a';
 const VALID_TOOLSETS =
   'shops, catalog, uploads, products, publishing, personalization, orders, support, webhooks, workflows';
+const KNOWN_VARIABLES =
+  'PRINTIFY_API_TOKEN, PRINTIFY_SHOP_ID, PRINTIFY_TOOLSETS, PRINTIFY_ENABLE_ORDERS, ' +
+  'PRINTIFY_ENABLE_DESTRUCTIVE, PRINTIFY_UPLOAD_DIRS, PRINTIFY_API_BASE_URL';
 
 function load(extra: Env = {}): ConfigResult {
   return loadConfig({ PRINTIFY_API_TOKEN: TOKEN, ...extra });
@@ -241,6 +244,67 @@ describe('loadConfig', () => {
         `PRINTIFY_UPLOAD_DIRS: "${missing}" does not exist`,
         `PRINTIFY_UPLOAD_DIRS: "${file}" is not a directory`,
       ]);
+    });
+  });
+
+  describe('unknown PRINTIFY_ variables', () => {
+    it('warns and suggests the closest known variable', () => {
+      const result = load({ PRINTIFY_ENABLE_ORDER: 'true' });
+      expect(result.warnings).toEqual([
+        'unknown variable PRINTIFY_ENABLE_ORDER (did you mean PRINTIFY_ENABLE_ORDERS?)',
+      ]);
+      expect(result.ok).toBe(true);
+    });
+
+    it('lists the known variables when no name is close', () => {
+      const result = loadConfig({ PRINTIFY_TOKEN: TOKEN });
+      expect(result.warnings).toEqual([
+        `unknown variable PRINTIFY_TOKEN. Known variables: ${KNOWN_VARIABLES}`,
+      ]);
+      expect(errorsOf(result)).toEqual([expect.stringContaining('PRINTIFY_API_TOKEN is required')]);
+    });
+
+    it('suggests the upper-case name for a lower-case variable', () => {
+      const result = loadConfig({ printify_api_token: TOKEN });
+      expect(result.warnings).toEqual([
+        'unknown variable printify_api_token (did you mean PRINTIFY_API_TOKEN?)',
+      ]);
+      expect(result.ok).toBe(false);
+    });
+
+    it('does not warn when env lookups ignore case, as on Windows', () => {
+      const stored: Record<string, string> = { Printify_Api_Token: TOKEN };
+      const env = new Proxy(stored, {
+        get: (target, key) =>
+          typeof key === 'string'
+            ? Object.entries(target).find(([name]) => name.toUpperCase() === key.toUpperCase())?.[1]
+            : undefined,
+      });
+      const result = loadConfig(env);
+      expect(result.warnings).toEqual([]);
+      expect(configOf(result).token.reveal()).toBe(TOKEN);
+    });
+
+    it('ignores variables without the PRINTIFY_ prefix', () => {
+      expect(load({ PATH: '/usr/bin', MY_PRINTIFY_TOKEN: 'x' }).warnings).toEqual([]);
+    });
+  });
+
+  describe('token redaction', () => {
+    it('never echoes the token, even when it was pasted into other variables', () => {
+      const result = loadConfig({
+        PRINTIFY_API_TOKEN: TOKEN,
+        PRINTIFY_SHOP_ID: TOKEN,
+        PRINTIFY_TOOLSETS: TOKEN,
+        PRINTIFY_ENABLE_ORDERS: TOKEN,
+        PRINTIFY_UPLOAD_DIRS: TOKEN,
+        PRINTIFY_API_BASE_URL: TOKEN,
+        PRINTIFY_TOKEN: TOKEN,
+      });
+      const output = [...errorsOf(result), ...result.warnings].join('\n');
+      expect(output).not.toContain(TOKEN);
+      expect(output.toLowerCase()).not.toContain(TOKEN.toLowerCase());
+      expect(output).toContain('[redacted]');
     });
   });
 });

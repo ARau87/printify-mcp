@@ -129,6 +129,8 @@ const envSchema = z.object({
   }),
 });
 
+const KNOWN_VARIABLES = Object.keys(envSchema.shape);
+
 function resolveUploadDir(entry: string): { ok: true; dir: string } | { ok: false; error: string } {
   const path = expandHome(entry);
   if (!isAbsolute(path)) {
@@ -155,19 +157,43 @@ function expandHome(entry: string): string {
   return entry;
 }
 
+function unknownVariableWarnings(env: Env): string[] {
+  const warnings: string[] = [];
+  for (const name of Object.keys(env)) {
+    const upper = name.toUpperCase();
+    if (!upper.startsWith('PRINTIFY_') || KNOWN_VARIABLES.includes(name)) continue;
+    // On Windows, env lookups ignore case, so a differently cased known name is not a typo.
+    if (KNOWN_VARIABLES.includes(upper) && env[upper] !== undefined) continue;
+    const suggestion = closest(upper, KNOWN_VARIABLES);
+    warnings.push(
+      suggestion === undefined
+        ? `unknown variable ${name}. Known variables: ${KNOWN_VARIABLES.join(', ')}`
+        : `unknown variable ${name} (did you mean ${suggestion}?)`,
+    );
+  }
+  return warnings;
+}
+
 /**
  * Reads and validates the configuration from `env`. Never throws and never reads `process.env`
  * itself. All problems are collected; warnings are returned whether or not the config is valid.
  */
 export function loadConfig(env: Env): ConfigResult {
+  const warnings = unknownVariableWarnings(env);
   const parsed = envSchema.safeParse(env);
   if (!parsed.success) {
-    return { ok: false, errors: parsed.error.issues.map((issue) => issue.message), warnings: [] };
+    // A token pasted into the wrong variable would otherwise be echoed in that variable's error.
+    // The truthiness check matters: replaceAll('', …) would insert between every character.
+    const token = env.PRINTIFY_API_TOKEN?.trim();
+    const errors = parsed.error.issues.map((issue) =>
+      token ? issue.message.replaceAll(token, '[redacted]') : issue.message,
+    );
+    return { ok: false, errors, warnings };
   }
   const data = parsed.data;
   return {
     ok: true,
-    warnings: [],
+    warnings,
     config: {
       token: data.PRINTIFY_API_TOKEN,
       shopId: data.PRINTIFY_SHOP_ID,
