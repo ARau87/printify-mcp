@@ -1,0 +1,30 @@
+{
+  "name": "printify-mcp",
+  "version": "0.0.0",
+  "type": "module",
+  "bin": {
+    "printify-mcp": "dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "dev": "tsc -p tsconfig.build.json --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:live": "node -e \"console.error('Live test suite not implemented yet — see #20'); process.exit(1)\""
+  },
+  "dependencies": {
+    "@modelcontextprotocol/server": "^2.0.0",
+    "zod": "^4.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "~6.0.3",
+    "vitest": "^5.0.0"
+  }
+}
