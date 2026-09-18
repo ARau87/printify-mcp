@@ -2,7 +2,7 @@
 
 - **Issue:** [#2 Configuration and stdio server bootstrap](https://github.com/ARau87/printify-mcp/issues/2)
 - **Date:** 2026-09-18
-- **Status:** approved in brainstorming, awaiting spec review
+- **Status:** approved
 
 ## Goal
 
@@ -92,6 +92,9 @@ function loadConfig(env: Readonly<Record<string, string | undefined>>): ConfigRe
   A URL can contain credentials, so its value is never echoed.
 - If the token's value appears in another variable's error, because the user pasted it into the
   wrong variable, it is replaced with `[redacted]`. An empty token is not used for this replacement.
+- Every JWT-shaped value in an error message is also replaced with `[redacted]`, because Printify
+  tokens are JWTs and a token pasted into another variable while `PRINTIFY_API_TOKEN` is empty would
+  otherwise be echoed.
 
 ### Variables
 
@@ -239,7 +242,8 @@ printify-mcp: 0.1.0 on stdio (toolsets: all; orders: off; destructive: off; defa
 
 - `toolsets` is `all` or the enabled names, comma-separated, in `TOOLSETS` order.
 - `default shop` is the id or `none`. `upload dirs` is the count.
-- `; api: <url>` is appended only when `PRINTIFY_API_BASE_URL` overrides the default.
+- `; api: <origin>` is appended only when `PRINTIFY_API_BASE_URL` overrides the default, and only the
+  origin is printed, because the path can carry credentials.
 - The token never appears.
 
 `main` then returns 0. The process keeps running because stdin is open, and it exits with code 0 on
@@ -344,7 +348,8 @@ All tests run under `npm test`. None needs the network or a Printify account.
   behaves like Windows, produces no warning for `Printify_Api_Token`.
 - **Token leak:** a distinctive mixed-case token, also pasted into every other variable. It must not
   appear in any error or warning, in its original case or lower-cased. On a valid configuration it must not appear in
-  `String(config.token)`, `JSON.stringify(config)` or `util.inspect(config)`.
+  `String(config.token)`, `JSON.stringify(config)` or `util.inspect(config)`. A separate case covers a
+  JWT-shaped token pasted into the other variables while `PRINTIFY_API_TOKEN` itself is empty.
 
 ### `test/secret.test.ts`
 
@@ -363,11 +368,15 @@ Edit distance on known pairs. `closest` returns the nearest candidate within the
 - `--help` and `-h` with an empty environment: stdout names every variable and every toolset, exit 0,
   `serve` not called.
 - `--version` and `-v`: stdout is `PACKAGE_VERSION` and a newline, exit 0.
-- An unknown option and a positional argument: the stderr message, exit 2.
+- An unknown option and a positional argument: the stderr message, exit 2. Option names that exist on
+  `Object.prototype`, such as `--constructor` and `--toString`, are usage errors too, not accepted
+  options.
 - A missing token: exit 1, stderr names `PRINTIFY_API_TOKEN`, stdout empty, `serve` not called.
 - An unknown toolset: exit 1, stderr names `PRINTIFY_TOOLSETS`, stdout empty.
 - A valid environment: `serve` is called once, its factory returns an `McpServer`, stderr has the
   summary line, the token appears in no output, exit 0.
+- An overridden `PRINTIFY_API_BASE_URL` with a path: the summary shows only the origin, and the path
+  never appears in any output.
 
 ### `test/server.test.ts` (updated)
 
@@ -384,7 +393,8 @@ The smoke steps in `.github/workflows/ci.yml` run against the built `dist/index.
 1. **Smoke-run the built server** (updated). The step sets `PRINTIFY_API_TOKEN: smoke-test-token`.
    It pipes `initialize`, `notifications/initialized` and `tools/list` into
    `timeout 10 node dist/index.js` and checks the output for `"name":"printify-mcp"` and
-   `"tools":[]`.
+   `"tools":[]`. It also fails when any stdout line is not a JSON-RPC message, i.e. does not start
+   with `{`.
 2. **Check --version.** The output of `node dist/index.js --version` equals the `version` in
    `package.json`.
 3. **Check that a missing token stops startup.** With no token and stdin from `/dev/null`, the
