@@ -2,6 +2,7 @@ import { realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { delimiter, isAbsolute, join, sep } from 'node:path';
 import { z } from 'zod';
+import { redactJwts } from './redact.js';
 import { Secret } from './secret.js';
 import { closest } from './suggest.js';
 import { TOOLSETS, isToolset, type Toolset } from './toolsets.js';
@@ -28,14 +29,6 @@ export type ConfigResult =
   | { ok: false; errors: string[]; warnings: string[] };
 
 const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
-
-// Printify Personal Access Tokens are JWTs. A token pasted into the wrong variable while
-// PRINTIFY_API_TOKEN is left empty would otherwise be echoed in full in that variable's error.
-const JWT_PATTERN = /eyJ[\w-]*\.[\w-]*\.[\w-]*/g;
-
-function redactJwts(message: string): string {
-  return message.replace(JWT_PATTERN, '[redacted]');
-}
 
 /** A trimmed variable; an empty value counts as unset. */
 const variable = z
@@ -192,6 +185,7 @@ export function loadConfig(env: Env): ConfigResult {
   if (!parsed.success) {
     // A token pasted into the wrong variable would otherwise be echoed in that variable's error.
     // The truthiness check matters: replaceAll('', …) would insert between every character.
+    // redactJwts covers a token pasted into another variable while PRINTIFY_API_TOKEN is empty.
     const token = env.PRINTIFY_API_TOKEN?.trim();
     const errors = parsed.error.issues.map((issue) => {
       const message = token ? issue.message.replaceAll(token, '[redacted]') : issue.message;
