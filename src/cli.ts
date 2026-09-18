@@ -37,7 +37,7 @@ function parseCommand(argv: readonly string[]): Command {
       return { kind: 'usage-error', message: `unexpected argument '${token.value}'` };
     }
     if (token.kind !== 'option') continue;
-    if (!(token.name in OPTIONS)) {
+    if (!Object.hasOwn(OPTIONS, token.name)) {
       return { kind: 'usage-error', message: `unknown option '${token.rawName}'` };
     }
     if (token.value !== undefined) {
@@ -95,7 +95,10 @@ function summary(config: Config): string {
     `default shop: ${config.shopId === undefined ? 'none' : String(config.shopId)}`,
     `upload dirs: ${String(config.uploadDirs.length)}`,
   ];
-  if (config.apiBaseUrl !== DEFAULT_API_BASE_URL) parts.push(`api: ${config.apiBaseUrl}`);
+  // Only the origin is printed: the path can carry credentials, e.g. a proxy token in the URL.
+  if (config.apiBaseUrl !== DEFAULT_API_BASE_URL) {
+    parts.push(`api: ${new URL(config.apiBaseUrl).origin}`);
+  }
   return `${PACKAGE_VERSION} on stdio (${parts.join('; ')})`;
 }
 

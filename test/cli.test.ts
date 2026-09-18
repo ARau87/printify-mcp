@@ -75,6 +75,8 @@ describe('main', () => {
       [['-x'], "unknown option '-x'"],
       [['serve'], "unexpected argument 'serve'"],
       [['--help=yes'], "option '--help' does not take a value"],
+      [['--constructor'], "unknown option '--constructor'"],
+      [['--toString'], "unknown option '--toString'"],
     ])('%j is a usage error', (argv, message) => {
       const { io, output, served } = fakeIo();
       expect(main(argv, { PRINTIFY_API_TOKEN: TOKEN }, io)).toBe(2);
@@ -150,6 +152,17 @@ describe('main', () => {
           'destructive: off; default shop: 12345; upload dirs: 1; api: http://localhost:8080)\n',
       );
       expect(output.stderr).not.toContain(TOKEN);
+    });
+
+    it('summarises an overridden base URL by its origin only', () => {
+      const { io, output } = fakeIo();
+      const env = {
+        PRINTIFY_API_TOKEN: TOKEN,
+        PRINTIFY_API_BASE_URL: 'https://proxy.example.com/Tok-path-secret/printify',
+      };
+      expect(main([], env, io)).toBe(0);
+      expect(output.stderr).toMatch(/; api: https:\/\/proxy\.example\.com\)\n$/);
+      expect(output.stderr).not.toContain('Tok-path-secret');
     });
 
     it('prints warnings before the summary', () => {
