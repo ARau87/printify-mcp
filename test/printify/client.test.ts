@@ -9,6 +9,7 @@ import {
 import { PrintifyApiError } from '../../src/printify/errors.js';
 import { apiPath } from '../../src/printify/path.js';
 import { Secret } from '../../src/secret.js';
+import { apiError, rejection } from './helpers.js';
 
 const TOKEN = 'Tok-client-8H7g6F5e';
 const BASE_URL = 'https://api.printify.com';
@@ -58,22 +59,6 @@ function client(respond: Responder, options: Partial<PrintifyClientOptions> = {}
     ...options,
   });
   return { printify, ...fake };
-}
-
-/** Awaits a promise that must reject, and returns the reason. */
-async function rejection(promise: Promise<unknown>): Promise<unknown> {
-  try {
-    await promise;
-  } catch (error) {
-    return error;
-  }
-  throw new Error('expected the promise to reject');
-}
-
-async function apiError(promise: Promise<unknown>): Promise<PrintifyApiError> {
-  const error = await rejection(promise);
-  if (error instanceof PrintifyApiError) return error;
-  throw new Error(`expected a PrintifyApiError, got ${String(error)}`);
 }
 
 /** Rejects once the request's signal aborts, or at once if it already has, like the real fetch. */

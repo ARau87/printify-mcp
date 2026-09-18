@@ -1,11 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { PrintifyApiError, type Route } from '../../src/printify/errors.js';
+import { type Route } from '../../src/printify/errors.js';
 import {
   MAX_WAIT_MS,
   bucketsFor,
   createRateLimiter,
   type RateLimiter,
 } from '../../src/printify/rate-limit.js';
+import { apiError } from './helpers.js';
 
 const PRODUCTS: Route = { method: 'GET', path: '/v1/shops/12/products.json' };
 const CATALOG: Route = { method: 'GET', path: '/v1/catalog/blueprints.json' };
@@ -32,22 +33,6 @@ function track(promise: Promise<void>) {
     },
   );
   return state;
-}
-
-/** Awaits a promise that must reject, and returns the reason. */
-async function rejection(promise: Promise<unknown>): Promise<unknown> {
-  try {
-    await promise;
-  } catch (error) {
-    return error;
-  }
-  throw new Error('expected the promise to reject');
-}
-
-async function apiError(promise: Promise<unknown>): Promise<PrintifyApiError> {
-  const error = await rejection(promise);
-  if (error instanceof PrintifyApiError) return error;
-  throw new Error(`expected a PrintifyApiError, got ${String(error)}`);
 }
 
 beforeEach(() => {
