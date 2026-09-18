@@ -230,3 +230,28 @@ describe('invalidResponseError', () => {
     );
   });
 });
+
+describe('PrintifyApiError', () => {
+  it('stores retryAfterSeconds and uses it for the hint', () => {
+    const error = new PrintifyApiError('GET /v1/shops.json was not sent', {
+      kind: 'http',
+      method: 'GET',
+      path: '/v1/shops.json',
+      status: 429,
+      retryAfterSeconds: 30,
+    });
+    expect(error.retryAfterSeconds).toBe(30);
+    expect(error.hint).toBe(
+      "Printify's rate limit is used up, so the request was not sent. Wait 30 seconds before " +
+        'trying again.',
+    );
+  });
+
+  it('leaves retryAfterSeconds unset on a 429 from Printify', () => {
+    const error = httpError({ method: 'GET', path: '/v1/shops.json' }, 429, undefined, null);
+    expect(error.retryAfterSeconds).toBeUndefined();
+    expect(error.hint).toBe(
+      "Printify's rate limit was reached. Wait a minute before trying again.",
+    );
+  });
+});

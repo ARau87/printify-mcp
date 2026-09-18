@@ -16,6 +16,8 @@ export interface PrintifyErrorFields extends Route {
   printifyMessage?: string | undefined;
   reason?: string | undefined;
   requestId?: string | undefined;
+  /** Set only by the rate limiter's fail-fast error: the request was not sent. */
+  retryAfterSeconds?: number | undefined;
 }
 
 /** Every failure of a Printify request. `kind` says which. The hint is advice for the assistant. */
@@ -29,6 +31,7 @@ export class PrintifyApiError extends Error {
   readonly printifyMessage: string | undefined;
   readonly reason: string | undefined;
   readonly requestId: string | undefined;
+  readonly retryAfterSeconds: number | undefined;
   readonly hint: string | undefined;
 
   constructor(message: string, fields: PrintifyErrorFields, options?: ErrorOptions) {
@@ -41,6 +44,7 @@ export class PrintifyApiError extends Error {
     this.printifyMessage = fields.printifyMessage;
     this.reason = fields.reason;
     this.requestId = fields.requestId;
+    this.retryAfterSeconds = fields.retryAfterSeconds;
     this.hint = hintFor(this);
   }
 }
