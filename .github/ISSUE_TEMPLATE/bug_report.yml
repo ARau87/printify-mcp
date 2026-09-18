@@ -1,0 +1,171 @@
+name: Bug report
+description: Something in printify-mcp is broken or behaves unexpectedly.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug!
+
+        > [!CAUTION]
+        > **Never paste your Printify API token.** Redact tokens, shop IDs you consider private, customer names, addresses and order details from every field below — this issue is public.
+
+        If the problem is with Printify itself (your account, billing, an order, a print provider) rather than this MCP server, please contact [Printify support](https://help.printify.com/hc/en-us) instead.
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched [existing issues](https://github.com/ARau87/printify-mcp/issues?q=is%3Aissue) and this bug has not been reported yet.
+          required: true
+        - label: I am using the latest release of printify-mcp.
+          required: false
+        - label: I removed API tokens and personal/customer data from everything I'm posting.
+          required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: A clear, concise description of the bug.
+      placeholder: Calling the product-creation tool fails with a 400 error when the design has a back print area.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: |
+        How can we trigger the bug? Include the prompt you gave your AI assistant, the MCP tool that was called and its arguments if you can see them.
+      placeholder: |
+        1. Configure printify-mcp in Claude Desktop with an API-only shop
+        2. Ask: "Create a black unisex t-shirt with this image on the front and back"
+        3. The assistant calls `<tool name>` with `{ ... }`
+        4. The tool returns an error
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What did you expect to happen instead?
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Affected area
+      description: Which part of the Printify API or the server does this touch?
+      multiple: true
+      options:
+        - Server startup / configuration / authentication
+        - Catalog (blueprints, print providers, variants, shipping)
+        - Shops
+        - Products (create, update, publish, delete)
+        - Uploads / images
+        - Orders
+        - Webhooks
+        - Tool descriptions / schemas (the AI calls tools wrongly)
+        - Error handling / rate limits
+        - Not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs and error output
+      description: |
+        Server logs, tool results or stack traces. Check your MCP client's log files (e.g. `~/Library/Logs/Claude/mcp-server-*.log` for Claude Desktop on macOS). **Redact your API token.**
+        This will be automatically formatted as code, so no need for backticks.
+      render: shell
+
+  - type: input
+    id: version
+    attributes:
+      label: printify-mcp version
+      description: Release version or commit SHA.
+      placeholder: 1.2.0 / a1b2c3d
+    validations:
+      required: true
+
+  - type: dropdown
+    id: client
+    attributes:
+      label: MCP client
+      description: Which application runs the server?
+      options:
+        - Claude Desktop
+        - Claude Code
+        - Cursor
+        - VS Code (GitHub Copilot)
+        - Windsurf
+        - MCP Inspector
+        - Other (name it in the next field)
+    validations:
+      required: true
+
+  - type: input
+    id: client-version
+    attributes:
+      label: MCP client version
+      description: If you picked "Other", include the client's name too.
+      placeholder: Claude Desktop 0.14.2
+
+  - type: dropdown
+    id: sales-channel
+    attributes:
+      label: Printify shop type
+      description: The sales channel of the shop you used, if relevant.
+      options:
+        - Not shop-related
+        - API-only (disconnected)
+        - Shopify
+        - Etsy
+        - WooCommerce
+        - Other
+
+  - type: input
+    id: node-version
+    attributes:
+      label: Node.js version
+      description: Output of `node --version`.
+      placeholder: v22.11.0
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: macOS 15.6 / Windows 11 / Ubuntu 24.04
+    validations:
+      required: true
+
+  - type: textarea
+    id: config
+    attributes:
+      label: MCP server configuration
+      description: The printify-mcp entry from your client's config file. **Replace the API token with `<redacted>`.**
+      render: json
+      placeholder: |
+        {
+          "mcpServers": {
+            "printify": {
+              "command": "npx",
+              "args": ["-y", "printify-mcp"],
+              "env": { "PRINTIFY_API_TOKEN": "<redacted>" }
+            }
+          }
+        }
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional context
+      description: Screenshots, related issues, workarounds you found, or anything else that helps.

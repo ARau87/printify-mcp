@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Printify account, order or billing problem
+    url: https://help.printify.com/hc/en-us
+    about: Problems with Printify itself (not this MCP server) are handled by Printify support.
+  - name: Printify API documentation
+    url: https://developers.printify.com/
+    about: Official reference for the endpoints this server wraps.

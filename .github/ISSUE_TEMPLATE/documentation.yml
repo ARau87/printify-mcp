@@ -1,0 +1,53 @@
+name: Documentation
+description: Report missing, wrong, outdated or confusing documentation.
+title: "[Docs]: "
+labels: ["documentation"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve the docs! This covers the README, setup guides, code comments and the descriptions of the MCP tools themselves (what your AI assistant reads).
+
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Type of problem
+      options:
+        - Missing — something isn't documented
+        - Incorrect — the docs say something that isn't true
+        - Outdated — the docs describe an older version
+        - Unclear — the docs are confusing or hard to follow
+        - Typo / formatting
+    validations:
+      required: true
+
+  - type: input
+    id: location
+    attributes:
+      label: Location
+      description: Link to the page, file, heading or tool name.
+      placeholder: README.md#configuration
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What's wrong or missing?
+      description: Quote the current text if it helps.
+      placeholder: The setup section doesn't explain where to get a Printify API token or which scopes it needs.
+    validations:
+      required: true
+
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: Suggested improvement
+      description: What should the docs say instead? A rough draft is very welcome.
+
+  - type: checkboxes
+    id: contribution
+    attributes:
+      label: Contribution
+      options:
+        - label: I'd like to open a pull request with the fix.

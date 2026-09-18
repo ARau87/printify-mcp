@@ -1,0 +1,87 @@
+name: Feature request
+description: Suggest a new tool, a new Printify API capability, or an improvement to existing behavior.
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for suggesting an improvement! The more concrete the use case, the easier it is to decide how the feature should work.
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched [existing issues](https://github.com/ARau87/printify-mcp/issues?q=is%3Aissue) and this has not been requested yet.
+          required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or use case
+      description: What are you trying to do, and what stops you today? Describe the goal, not just the solution.
+      placeholder: I manage 40+ products and want my assistant to bulk-update prices, but I have to ask for each product one by one.
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: How should it work? New tool, new parameter, changed behavior, etc.
+      placeholder: A `bulk_update_prices` tool that takes a list of product IDs and a percentage or fixed amount.
+    validations:
+      required: true
+
+  - type: textarea
+    id: example
+    attributes:
+      label: Example prompt
+      description: What would you ask your AI assistant, and what should happen?
+      placeholder: '"Raise the price of all hoodies in my Etsy shop by 10%" → the assistant lists the hoodies, shows the new prices, and updates them after I confirm.'
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      multiple: true
+      options:
+        - Server startup / configuration / authentication
+        - Catalog (blueprints, print providers, variants, shipping)
+        - Shops
+        - Products (create, update, publish, delete)
+        - Uploads / images
+        - Orders
+        - Webhooks
+        - Tool descriptions / schemas
+        - Developer experience / tooling
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: api-reference
+    attributes:
+      label: Printify API reference
+      description: If this maps to a Printify API endpoint, link it from the [API docs](https://developers.printify.com/).
+      placeholder: https://developers.printify.com/#products
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Workarounds you use today or other approaches you thought about.
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional context
+      description: Screenshots, links, related issues, or anything else.
+
+  - type: checkboxes
+    id: contribution
+    attributes:
+      label: Contribution
+      options:
+        - label: I'd like to implement this myself and open a pull request.
