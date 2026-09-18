@@ -1,5 +1,10 @@
 #!/usr/bin/env node
-import { StdioServerTransport } from '@modelcontextprotocol/server/stdio';
-import { createServer } from './server.js';
+import { main } from './cli.js';
 
-await createServer().connect(new StdioServerTransport());
+try {
+  process.exitCode = main(process.argv.slice(2), process.env);
+} catch (error) {
+  const detail = error instanceof Error ? (error.stack ?? error.message) : String(error);
+  process.stderr.write(`printify-mcp: fatal: ${detail}\n`);
+  process.exitCode = 1;
+}
