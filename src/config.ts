@@ -126,7 +126,14 @@ const envSchema = z.object({
       ctx.addIssue('PRINTIFY_API_BASE_URL must not contain credentials, a query or a fragment');
       return z.NEVER;
     }
-    return `${url.origin}${url.pathname}`.replace(/\/+$/, '');
+    const pathname = url.pathname.replace(/\/+$/, '');
+    if (/\/v[12]$/i.test(pathname)) {
+      ctx.addIssue(
+        'PRINTIFY_API_BASE_URL must not end in /v1 or /v2; the server adds the API version itself',
+      );
+      return z.NEVER;
+    }
+    return `${url.origin}${pathname}`;
   }),
 });
 

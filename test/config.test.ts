@@ -163,8 +163,21 @@ describe('loadConfig', () => {
       ['http://localhost:8080', 'http://localhost:8080'],
       ['http://127.0.0.1:8080/', 'http://127.0.0.1:8080'],
       ['http://[::1]:8080', 'http://[::1]:8080'],
+      ['https://proxy.example.com/v10', 'https://proxy.example.com/v10'],
+      ['https://v1', 'https://v1'],
     ])('accepts %s', (value, expected) => {
       expect(configOf(load({ PRINTIFY_API_BASE_URL: value })).apiBaseUrl).toBe(expected);
+    });
+
+    it.each([
+      'https://api.printify.com/v1',
+      'https://api.printify.com/v2/',
+      'https://api.printify.com/V1',
+      'https://proxy.example.com/printify/v1',
+    ])('rejects %s, which already names an API version', (value) => {
+      expect(errorsOf(load({ PRINTIFY_API_BASE_URL: value }))).toEqual([
+        'PRINTIFY_API_BASE_URL must not end in /v1 or /v2; the server adds the API version itself',
+      ]);
     });
 
     it('rejects a value that is not a URL', () => {
