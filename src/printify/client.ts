@@ -11,6 +11,9 @@ import {
   type Route,
 } from './errors.js';
 import type { ApiPath } from './path.js';
+import { MAX_WAIT_MS, createRateLimiter, type RateLimiter } from './rate-limit.js';
+import { MAX_ATTEMPTS, retryDelayMs, shouldRetry, type Outcome } from './retry.js';
+import { sleep } from './sleep.js';
 import type { HttpMethod } from './types.js';
 
 export const DEFAULT_TIMEOUT_MS = 30_000;
@@ -19,7 +22,7 @@ export interface PrintifyClientOptions {
   token: Secret;
   /** `config.apiBaseUrl`: no trailing slash and no API version. */
   baseUrl: string;
-  /** Defaults to the global `fetch`. Tests and #6 pass a fake; #4 wraps it. */
+  /** Defaults to the global `fetch`. Tests and #6 pass a fake, which sits below the retries. */
   fetch?: typeof globalThis.fetch;
   /** Default timeout for every request, in milliseconds. */
   timeoutMs?: number;
@@ -40,15 +43,18 @@ export interface RequestOptions {
 
 export interface PrintifyClient {
   /**
-   * Sends one request. Resolves to the parsed JSON body, or `undefined` when the body is empty.
-   * Rejects with a `PrintifyApiError`, or with the caller's abort reason when `signal` aborts.
+   * Sends one request, waiting for a rate-limit slot before each attempt and retrying the failures
+   * that are safe to retry. Resolves to the parsed JSON body, or `undefined` when the body is
+   * empty. Rejects with a `PrintifyApiError`, or with the caller's abort reason when `signal`
+   * aborts.
    */
   request(method: HttpMethod, path: ApiPath, options?: RequestOptions): Promise<unknown>;
 }
 
 /**
- * Creates a client. It starts no timers and opens no connections until the first request. Throws
- * a `TypeError` if the token contains characters that cannot be sent in an HTTP header.
+ * Creates a client with its own rate limiter. It starts no timers and opens no connections until
+ * the first request. Throws a `TypeError` if the token contains characters that cannot be sent in
+ * an HTTP header.
  */
 export function createPrintifyClient(options: PrintifyClientOptions): PrintifyClient {
   // The only reveal() in the codebase: the header needs the token, and errors must scrub it.
@@ -66,6 +72,7 @@ export function createPrintifyClient(options: PrintifyClientOptions): PrintifyCl
       'The Printify token contains characters that cannot be sent in an HTTP header',
     );
   }
+  const limiter = createRateLimiter();
 
   return {
     async request(method, path, { query, body, signal, timeoutMs = defaultTimeoutMs } = {}) {
@@ -78,19 +85,17 @@ export function createPrintifyClient(options: PrintifyClientOptions): PrintifyCl
       const payload = body === undefined ? undefined : JSON.stringify(body);
       const route: Route = { method, path };
       const fetch = options.fetch ?? globalThis.fetch;
+      const url = buildUrl(options.baseUrl, path, query);
       const timeout = AbortSignal.timeout(timeoutMs);
+      // Covers every attempt, wait and backoff, so a call never takes longer than its timeout.
+      const combined = signal === undefined ? timeout : AbortSignal.any([timeout, signal]);
 
       let response: Response;
       let text: string;
       try {
-        response = await fetch(buildUrl(options.baseUrl, path, query), {
-          method,
-          headers: { ...headers },
-          body: payload,
-          signal: signal === undefined ? timeout : AbortSignal.any([timeout, signal]),
-        });
-        // The timeout covers the body too, so a stalled download still ends on time.
-        text = await response.text();
+        ({ response, text } = await send(limiter, route, combined, () =>
+          fetch(url, { method, headers: { ...headers }, body: payload, signal: combined }),
+        ));
       } catch (error) {
         if (signal?.aborted) throw signal.reason;
         if (error instanceof PrintifyApiError) throw error;
@@ -117,6 +122,49 @@ export function createPrintifyClient(options: PrintifyClientOptions): PrintifyCl
       return json.value;
     },
   };
+}
+
+interface Received {
+  response: Response;
+  text: string;
+}
+
+/**
+ * Sends a request up to `MAX_ATTEMPTS` times, taking a rate-limit slot before each attempt.
+ * Resolves to the last response with its body read, or rejects with the last error. An abort, and
+ * a `PrintifyApiError` such as the limiter's fail-fast error, end it at once.
+ */
+async function send(
+  limiter: RateLimiter,
+  route: Route,
+  signal: AbortSignal,
+  sendOnce: () => Promise<Response>,
+): Promise<Received> {
+  for (let attempt = 1; ; attempt += 1) {
+    await limiter.acquire(route, signal);
+    let received: Received | undefined;
+    let failure: unknown;
+    try {
+      const response = await sendOnce();
+      // The signal covers the body too, so a stalled download still ends on time. Reading every
+      // body in full also frees the connection of a response that is retried.
+      received = { response, text: await response.text() };
+    } catch (error) {
+      if (signal.aborted || error instanceof PrintifyApiError) throw error;
+      failure = error;
+    }
+    const outcome: Outcome =
+      received === undefined ? 'network' : { status: received.response.status };
+    if (attempt < MAX_ATTEMPTS && shouldRetry(route.method, outcome)) {
+      const delay = retryDelayMs(attempt, received?.response.headers.get('retry-after') ?? null);
+      if (delay <= MAX_WAIT_MS) {
+        await sleep(delay, signal);
+        continue;
+      }
+    }
+    if (received === undefined) throw failure;
+    return received;
+  }
 }
 
 /** Concatenates rather than using `new URL(path, base)`, which would drop a proxy path prefix. */

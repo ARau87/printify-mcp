@@ -71,7 +71,19 @@ const neverAnswer: Responder = ({ signal }) =>
     else signal.addEventListener('abort', fail);
   });
 
+/** Answers the nth request with the nth responder, and every later one with the last. */
+function inTurn(...responders: Responder[]): Responder {
+  let count = 0;
+  return (request) => {
+    const respond = responders[Math.min(count, responders.length - 1)];
+    count += 1;
+    if (respond === undefined) throw new Error('inTurn needs at least one responder');
+    return respond(request);
+  };
+}
+
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
@@ -250,10 +262,17 @@ describe('createPrintifyClient: failures', () => {
   });
 
   it('marks an HTML error page as a non-JSON response', async () => {
-    const { printify } = client(() => new Response('<html>Bad gateway</html>', { status: 502 }));
-    const error = await apiError(printify.request('GET', apiPath`/v1/shops.json`));
+    vi.useFakeTimers();
+    const { printify, requests } = client(
+      () => new Response('<html>Bad gateway</html>', { status: 502 }),
+    );
+    const pending = apiError(printify.request('GET', apiPath`/v1/shops.json`));
+    // A GET is retried on 502: three attempts, with at most 1 s and then 2 s of backoff.
+    await vi.advanceTimersByTimeAsync(3_000);
+    const error = await pending;
     expect(error).toMatchObject({ kind: 'http', status: 502 });
     expect(error.message).toBe('GET /v1/shops.json failed with HTTP 502 (non-JSON response)');
+    expect(requests).toHaveLength(3);
   });
 
   it('rejects a 2xx body that is not JSON', async () => {
@@ -324,8 +343,10 @@ describe('createPrintifyClient: failures', () => {
       path: '/v1/shops.json',
       status: 429,
     });
-    const { printify } = client(() => Promise.reject(rateLimited));
+    const { printify, fetch } = client(() => Promise.reject(rateLimited));
     await expect(printify.request('GET', apiPath`/v1/shops.json`)).rejects.toBe(rateLimited);
+    // Not retried, although a GET is retried after other rejections.
+    expect(fetch).toHaveBeenCalledTimes(1);
   });
 
   it('turns a rejected fetch into a network error that keeps the cause', async () => {
@@ -333,11 +354,185 @@ describe('createPrintifyClient: failures', () => {
       code: 'ENOTFOUND',
     });
     const cause = new TypeError('fetch failed', { cause: system });
-    const { printify } = client(() => Promise.reject(cause));
-    const error = await apiError(printify.request('GET', apiPath`/v1/shops.json`));
+    vi.useFakeTimers();
+    const { printify, requests } = client(() => Promise.reject(cause));
+    const pending = apiError(printify.request('GET', apiPath`/v1/shops.json`));
+    // A GET is retried after a network error: three attempts, then the last error is reported.
+    await vi.advanceTimersByTimeAsync(3_000);
+    const error = await pending;
+    expect(requests).toHaveLength(3);
     expect(error).toMatchObject({ kind: 'network', status: undefined });
     expect(error.cause).toBe(cause);
     expect(error.message).toBe('GET /v1/shops.json failed: could not reach Printify (ENOTFOUND)');
+  });
+});
+
+describe('createPrintifyClient: retries and rate limits', () => {
+  const badGateway = () => new Response('<html>Bad gateway</html>', { status: 502 });
+
+  it('retries a 429, even for a POST, and resolves with the next response', async () => {
+    vi.useFakeTimers();
+    const { printify, requests } = client(
+      inTurn(
+        () => json({}, 429),
+        () => json({ id: 'o-1' }),
+      ),
+    );
+    const pending = printify.request('POST', apiPath`/v1/shops/${12}/orders.json`, { body: {} });
+    await vi.advanceTimersByTimeAsync(1_000);
+    await expect(pending).resolves.toEqual({ id: 'o-1' });
+    expect(requests).toHaveLength(2);
+    expect(requests[1]?.body).toBe('{}');
+  });
+
+  it('waits for Retry-After before retrying', async () => {
+    vi.useFakeTimers();
+    const { printify, requests } = client(
+      inTurn(
+        () => json({}, 429, { 'Retry-After': '5' }),
+        () => json({ ok: true }),
+      ),
+    );
+    const pending = printify.request('GET', apiPath`/v1/shops.json`);
+    await vi.advanceTimersByTimeAsync(4_900);
+    expect(requests).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(100);
+    await expect(pending).resolves.toEqual({ ok: true });
+    expect(requests).toHaveLength(2);
+  });
+
+  it('does not retry when Retry-After asks for more than 10 seconds', async () => {
+    const { printify, requests } = client(() =>
+      json({ error: 'Too Many Requests' }, 429, { 'Retry-After': '120' }),
+    );
+    const error = await apiError(printify.request('GET', apiPath`/v1/shops.json`));
+    expect(error).toMatchObject({ kind: 'http', status: 429, retryAfterSeconds: undefined });
+    expect(error.hint).toBe(
+      "Printify's rate limit was reached. Wait a minute before trying again.",
+    );
+    expect(requests).toHaveLength(1);
+  });
+
+  it('never retries a POST on 502', async () => {
+    vi.useFakeTimers();
+    const { printify, requests } = client(badGateway);
+    const error = await apiError(
+      printify.request('POST', apiPath`/v1/shops/${12}/orders.json`, { body: {} }),
+    );
+    expect(error.status).toBe(502);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(requests).toHaveLength(1);
+  });
+
+  it('retries a GET on 503 and resolves with the next response', async () => {
+    vi.useFakeTimers();
+    const { printify, requests } = client(
+      inTurn(
+        () => json({}, 503),
+        () => json({ ok: true }),
+      ),
+    );
+    const pending = printify.request('GET', apiPath`/v1/shops.json`);
+    await vi.advanceTimersByTimeAsync(1_000);
+    await expect(pending).resolves.toEqual({ ok: true });
+    expect(requests).toHaveLength(2);
+  });
+
+  it('never retries a 500 or other 4xx responses', async () => {
+    vi.useFakeTimers();
+    for (const status of [500, 400, 404]) {
+      const { printify, requests } = client(() => json({ error: 'Nope' }, status));
+      const error = await apiError(printify.request('GET', apiPath`/v1/shops.json`));
+      expect(error.status).toBe(status);
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(requests).toHaveLength(1);
+    }
+  });
+
+  it('retries a GET after a network error, but not a POST', async () => {
+    vi.useFakeTimers();
+    const failed = () => Promise.reject(new TypeError('fetch failed'));
+    const get = client(inTurn(failed, () => json({ ok: true })));
+    const pending = get.printify.request('GET', apiPath`/v1/shops.json`);
+    await vi.advanceTimersByTimeAsync(1_000);
+    await expect(pending).resolves.toEqual({ ok: true });
+    expect(get.requests).toHaveLength(2);
+
+    const post = client(failed);
+    const error = await apiError(
+      post.printify.request('POST', apiPath`/v1/shops/${12}/orders.json`, { body: {} }),
+    );
+    expect(error.kind).toBe('network');
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(post.requests).toHaveLength(1);
+  });
+
+  it('retries a GET whose body fails midway', async () => {
+    vi.useFakeTimers();
+    const brokenBody = () =>
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.error(new TypeError('terminated'));
+          },
+        }),
+      );
+    const { printify, requests } = client(inTurn(brokenBody, () => json({ ok: true })));
+    const pending = printify.request('GET', apiPath`/v1/uploads.json`);
+    await vi.advanceTimersByTimeAsync(1_000);
+    await expect(pending).resolves.toEqual({ ok: true });
+    expect(requests).toHaveLength(2);
+  });
+
+  it('fails fast on the 101st catalog request without calling fetch', async () => {
+    vi.useFakeTimers();
+    const { printify, fetch } = client(() => json({}));
+    const path = apiPath`/v1/catalog/blueprints.json`;
+    await Promise.all(Array.from({ length: 100 }, () => printify.request('GET', path)));
+    const error = await apiError(printify.request('GET', path));
+    expect(error).toMatchObject({ kind: 'http', status: 429, retryAfterSeconds: 60 });
+    expect(error.message).toBe(
+      'GET /v1/catalog/blueprints.json was not sent: the limit of 100 catalog requests per ' +
+        'minute is used up. Retry in 60 seconds',
+    );
+    expect(fetch).toHaveBeenCalledTimes(100);
+  });
+
+  it('gives each client its own limiter', async () => {
+    vi.useFakeTimers();
+    const path = apiPath`/v1/catalog/blueprints.json`;
+    const first = client(() => json({}));
+    await Promise.all(Array.from({ length: 100 }, () => first.printify.request('GET', path)));
+    const second = client(() => json({}));
+    await expect(second.printify.request('GET', path)).resolves.toEqual({});
+  });
+
+  it('stops at once when the caller aborts during the backoff', async () => {
+    vi.useFakeTimers();
+    const { printify, requests } = client(() => json({}, 429));
+    const controller = new AbortController();
+    const reason = new Error('tool call cancelled');
+    const pending = rejection(
+      printify.request('GET', apiPath`/v1/shops.json`, { signal: controller.signal }),
+    );
+    // The first attempt has failed; the backoff before the second lasts at least 500 ms.
+    await vi.advanceTimersByTimeAsync(100);
+    expect(requests).toHaveLength(1);
+    controller.abort(reason);
+    expect(await pending).toBe(reason);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(requests).toHaveLength(1);
+  });
+
+  it('times out during the backoff', async () => {
+    // Real timers: AbortSignal.timeout does not follow Vitest's fake timers.
+    const { printify, requests } = client(() => json({}, 429, { 'Retry-After': '5' }), {
+      timeoutMs: 20,
+    });
+    const error = await apiError(printify.request('GET', apiPath`/v1/shops.json`));
+    expect(error).toMatchObject({ kind: 'timeout' });
+    expect(error.message).toBe('GET /v1/shops.json timed out after 20 ms');
+    expect(requests).toHaveLength(1);
   });
 });
 
