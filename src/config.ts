@@ -51,12 +51,21 @@ function flag(name: string) {
 
 const envSchema = z.object({
   PRINTIFY_API_TOKEN: variable.transform((value, ctx) => {
-    if (value !== undefined) return new Secret(value);
-    ctx.addIssue(
-      'PRINTIFY_API_TOKEN is required. Create a Personal Access Token in Printify and set it in ' +
-        'your MCP client config: https://developers.printify.com/#authentication',
-    );
-    return z.NEVER;
+    if (value === undefined) {
+      ctx.addIssue(
+        'PRINTIFY_API_TOKEN is required. Create a Personal Access Token in Printify and set it in ' +
+          'your MCP client config: https://developers.printify.com/#authentication',
+      );
+      return z.NEVER;
+    }
+    // Never echo the value: a header-breaking character is still part of the token.
+    if (/[^\x21-\x7e]/.test(value)) {
+      ctx.addIssue(
+        'PRINTIFY_API_TOKEN must contain only visible ASCII characters, with no spaces or line breaks',
+      );
+      return z.NEVER;
+    }
+    return new Secret(value);
   }),
 
   PRINTIFY_SHOP_ID: variable.transform((value, ctx) => {

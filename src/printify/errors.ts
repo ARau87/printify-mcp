@@ -50,8 +50,13 @@ export type Redact = (text: string) => string;
 
 const MAX_TEXT_LENGTH = 1000;
 
-// A field with an unexpected type is ignored rather than failing the whole body.
-const optionalString = z.string().optional().catch(undefined);
+// A field with an unexpected type is ignored rather than failing the whole body. Blank text
+// (empty or only whitespace) counts as missing, so the field-source table's fallback applies.
+const optionalString = z
+  .string()
+  .optional()
+  .catch(undefined)
+  .transform((value) => (value === undefined || value.trim() === '' ? undefined : value));
 const optionalNumber = z.number().optional().catch(undefined);
 
 // Reads both envelopes, {status, code, message, errors} and {error, request_id}, and any mix.

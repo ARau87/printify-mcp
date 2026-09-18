@@ -91,6 +91,22 @@ describe('loadConfig', () => {
       expect(config.token.reveal()).toBe(TOKEN);
     });
 
+    it.each([
+      ['an inner space', `${TOKEN.slice(0, 3)} ${TOKEN.slice(3)}`],
+      ['an inner \\n', `${TOKEN.slice(0, 3)}\n${TOKEN.slice(3)}`],
+      ['an inner \\r\\n', `${TOKEN.slice(0, 3)}\r\n${TOKEN.slice(3)}`],
+      ['an inner NUL', `${TOKEN.slice(0, 3)}\0${TOKEN.slice(3)}`],
+      ['a non-ASCII letter', 'Tök-9F8e7D6c5B4a'],
+    ])('rejects a token with %s', (_, value) => {
+      const errors = errorsOf(loadConfig({ PRINTIFY_API_TOKEN: value }));
+      expect(errors).toEqual([
+        'PRINTIFY_API_TOKEN must contain only visible ASCII characters, with no spaces or line breaks',
+      ]);
+      for (const error of errors) {
+        expect(error).not.toContain(value);
+      }
+    });
+
     it('is redacted when the config is printed or serialised', () => {
       const config = configOf(load());
       expect(String(config.token)).toBe('[redacted]');

@@ -2,6 +2,7 @@ import { PACKAGE_VERSION } from '../package-info.js';
 import { redactValues } from '../redact.js';
 import type { Secret } from '../secret.js';
 import {
+  PrintifyApiError,
   httpError,
   invalidResponseError,
   networkError,
@@ -45,7 +46,10 @@ export interface PrintifyClient {
   request(method: HttpMethod, path: ApiPath, options?: RequestOptions): Promise<unknown>;
 }
 
-/** Creates a client. It starts no timers and opens no connections until the first request. */
+/**
+ * Creates a client. It starts no timers and opens no connections until the first request. Throws
+ * a `TypeError` if the token contains characters that cannot be sent in an HTTP header.
+ */
 export function createPrintifyClient(options: PrintifyClientOptions): PrintifyClient {
   // The only reveal() in the codebase: the header needs the token, and errors must scrub it.
   const token = options.token.reveal();
@@ -55,6 +59,13 @@ export function createPrintifyClient(options: PrintifyClientOptions): PrintifyCl
     'User-Agent': `printify-mcp/${PACKAGE_VERSION}`,
     'Content-Type': 'application/json;charset=utf-8',
   };
+  try {
+    new Headers(headers);
+  } catch {
+    throw new TypeError(
+      'The Printify token contains characters that cannot be sent in an HTTP header',
+    );
+  }
 
   return {
     async request(method, path, { query, body, signal, timeoutMs = defaultTimeoutMs } = {}) {
@@ -62,6 +73,9 @@ export function createPrintifyClient(options: PrintifyClientOptions): PrintifyCl
       if (method === 'GET' && body !== undefined) {
         throw new TypeError('A GET request cannot have a body');
       }
+      // Serialised before the try: a body that cannot be JSON-encoded (e.g. a BigInt) must not
+      // be reported as a network error.
+      const payload = body === undefined ? undefined : JSON.stringify(body);
       const route: Route = { method, path };
       const fetch = options.fetch ?? globalThis.fetch;
       const timeout = AbortSignal.timeout(timeoutMs);
@@ -71,14 +85,15 @@ export function createPrintifyClient(options: PrintifyClientOptions): PrintifyCl
       try {
         response = await fetch(buildUrl(options.baseUrl, path, query), {
           method,
-          headers,
-          body: body === undefined ? undefined : JSON.stringify(body),
+          headers: { ...headers },
+          body: payload,
           signal: signal === undefined ? timeout : AbortSignal.any([timeout, signal]),
         });
         // The timeout covers the body too, so a stalled download still ends on time.
         text = await response.text();
       } catch (error) {
         if (signal?.aborted) throw signal.reason;
+        if (error instanceof PrintifyApiError) throw error;
         if (timeout.aborted) throw timeoutError(route, timeoutMs);
         throw networkError(route, error);
       }

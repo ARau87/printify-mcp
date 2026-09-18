@@ -56,6 +56,24 @@ describe('httpError', () => {
     expect(error.hint).toContain('The image resolution is too low');
   });
 
+  it('treats a blank message as missing and falls back to error', () => {
+    const error = httpError(PRODUCT, 404, { value: { message: '  ', error: 'Not found' } }, null);
+    expect(error.printifyMessage).toBe('Not found');
+  });
+
+  it('treats a blank request_id as missing and falls back to the correlation id', () => {
+    const body = { error: 'Not found', request_id: '' };
+    const error = httpError(PRODUCT, 404, { value: body }, 'corr-2');
+    expect(error.requestId).toBe('corr-2');
+  });
+
+  it('treats a blank errors.reason as missing and falls back to stringifying errors', () => {
+    const body = { errors: { reason: ' ', code: 8150 } };
+    const error = httpError(PRODUCT, 422, { value: body }, null);
+    expect(error.reason).toBe('{"reason":" ","code":8150}');
+    expect(error.code).toBe(8150);
+  });
+
   it('reads the {error, request_id} body and prefers its request id', () => {
     const body = { error: 'Not found', request_id: `1789735516@${CORRELATION_ID}` };
     const error = httpError(PRODUCT, 404, { value: body }, 'header-id');

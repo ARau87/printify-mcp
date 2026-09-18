@@ -121,13 +121,22 @@ describe('createPrintifyClient: successful requests', () => {
   });
 
   it('sends a body as JSON', async () => {
-    const { printify, requests } = client(() => json({ id: 'abc' }));
+    const { printify, requests, fetch } = client(() => json({ id: 'abc' }));
     const body = { title: 'Shirt', tags: ['cat'] };
     await expect(
       printify.request('POST', apiPath`/v1/shops/${12}/products.json`, { body }),
     ).resolves.toEqual({ id: 'abc' });
     expect(requests[0]?.method).toBe('POST');
     expect(requests[0]?.body).toBe('{"title":"Shirt","tags":["cat"]}');
+    // Pins the shape #4 wraps: a URL string and a plain init object.
+    expect(fetch).toHaveBeenCalledWith(
+      'https://api.printify.com/v1/shops/12/products.json',
+      expect.objectContaining({
+        method: 'POST',
+        body: '{"title":"Shirt","tags":["cat"]}',
+        signal: expect.any(AbortSignal) as AbortSignal,
+      }),
+    );
   });
 
   it.each([
@@ -155,11 +164,23 @@ describe('createPrintifyClient: successful requests', () => {
   });
 
   it('uses the global fetch by default', async () => {
+    // The client is created before the global is stubbed, so this proves the `fetch` option is
+    // read on every request rather than captured once at construction.
+    const printify = createPrintifyClient({ token: new Secret(TOKEN), baseUrl: BASE_URL });
     const fake = fakeFetch(() => json({ ok: true }));
     vi.stubGlobal('fetch', fake.fetch);
-    const printify = createPrintifyClient({ token: new Secret(TOKEN), baseUrl: BASE_URL });
     await expect(printify.request('GET', apiPath`/v1/shops.json`)).resolves.toEqual({ ok: true });
     expect(fake.requests).toHaveLength(1);
+  });
+
+  it('gives each request its own headers object', async () => {
+    const { printify, fetch } = client(() => json({}));
+    await printify.request('GET', apiPath`/v1/shops.json`);
+    await printify.request('GET', apiPath`/v1/shops.json`);
+    expect(fetch.mock.calls).toHaveLength(2);
+    const firstHeaders = fetch.mock.calls[0]?.[1]?.headers;
+    const secondHeaders = fetch.mock.calls[1]?.[1]?.headers;
+    expect(firstHeaders).not.toBe(secondHeaders);
   });
 
   it('times out after 30 seconds by default', async () => {
@@ -171,11 +192,44 @@ describe('createPrintifyClient: successful requests', () => {
   });
 });
 
+describe('createPrintifyClient: construction', () => {
+  it('throws if the token cannot be sent in an HTTP header', () => {
+    const fake = fakeFetch(() => json({}));
+    let error: unknown;
+    try {
+      createPrintifyClient({
+        token: new Secret('Tok-bad\r\nline'),
+        baseUrl: BASE_URL,
+        fetch: fake.fetch,
+      });
+    } catch (caught) {
+      error = caught;
+    }
+    expect(error).toBeInstanceOf(TypeError);
+    expect(error).toMatchObject({
+      message: 'The Printify token contains characters that cannot be sent in an HTTP header',
+    });
+    expect(inspect(error)).not.toContain('Tok-bad');
+    expect(fake.fetch).not.toHaveBeenCalled();
+  });
+});
+
 describe('createPrintifyClient: failures', () => {
   it('rejects a GET with a body before sending anything', async () => {
     const { printify, fetch } = client(() => json({}));
     const error = await rejection(
       printify.request('GET', apiPath`/v1/shops.json`, { body: { a: 1 } }),
+    );
+    expect(error).toBeInstanceOf(TypeError);
+    expect(error).not.toBeInstanceOf(PrintifyApiError);
+    expect(error).toMatchObject({ message: 'A GET request cannot have a body' });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('rejects a body that cannot be serialised before sending anything', async () => {
+    const { printify, fetch } = client(() => json({}));
+    const error = await rejection(
+      printify.request('POST', apiPath`/v1/shops/${12}/products.json`, { body: { n: 1n } }),
     );
     expect(error).toBeInstanceOf(TypeError);
     expect(error).not.toBeInstanceOf(PrintifyApiError);
@@ -278,6 +332,17 @@ describe('createPrintifyClient: failures', () => {
     ).rejects.toBe(reason);
   });
 
+  it('re-throws a PrintifyApiError thrown by fetch unchanged', async () => {
+    const rateLimited = new PrintifyApiError('GET /v1/shops.json was not sent: rate limit', {
+      kind: 'http',
+      method: 'GET',
+      path: '/v1/shops.json',
+      status: 429,
+    });
+    const { printify } = client(() => Promise.reject(rateLimited));
+    await expect(printify.request('GET', apiPath`/v1/shops.json`)).rejects.toBe(rateLimited);
+  });
+
   it('turns a rejected fetch into a network error that keeps the cause', async () => {
     const system = Object.assign(new Error('getaddrinfo ENOTFOUND api.printify.com'), {
       code: 'ENOTFOUND',
@@ -306,7 +371,9 @@ describe('createPrintifyClient: redaction', () => {
       zip: '10115',
     };
     const addressText = Object.values(address).join(' ');
-    const echoed = `${TOKEN} ${jwt} ${addressText}`;
+    // A gift's shipping address, nested inside the order body, still counts as an address_to.
+    const gift = { address_to: { first_name: 'Konstantin' } };
+    const echoed = `${TOKEN} ${jwt} ${addressText} ${gift.address_to.first_name}`;
     const { printify } = client(
       () =>
         json(
@@ -324,7 +391,7 @@ describe('createPrintifyClient: redaction', () => {
     const error = await apiError(
       printify.request('POST', apiPath`/v1/shops/${12}/orders.json`, {
         query: { note: 'query-secret' },
-        body: { external_id: 'o-1', line_items: [], address_to: address },
+        body: { external_id: 'o-1', line_items: [], address_to: address, gift },
       }),
     );
     const outputs = [
@@ -339,6 +406,7 @@ describe('createPrintifyClient: redaction', () => {
       TOKEN,
       jwt,
       ...Object.values(address).filter((value) => value.length >= 3),
+      gift.address_to.first_name,
       'secret-prefix',
       'query-secret',
     ];
