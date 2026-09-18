@@ -29,6 +29,14 @@ export type ConfigResult =
 
 const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
 
+// Printify Personal Access Tokens are JWTs. A token pasted into the wrong variable while
+// PRINTIFY_API_TOKEN is left empty would otherwise be echoed in full in that variable's error.
+const JWT_PATTERN = /eyJ[\w-]*\.[\w-]*\.[\w-]*/g;
+
+function redactJwts(message: string): string {
+  return message.replace(JWT_PATTERN, '[redacted]');
+}
+
 /** A trimmed variable; an empty value counts as unset. */
 const variable = z
   .string()
@@ -185,9 +193,10 @@ export function loadConfig(env: Env): ConfigResult {
     // A token pasted into the wrong variable would otherwise be echoed in that variable's error.
     // The truthiness check matters: replaceAll('', …) would insert between every character.
     const token = env.PRINTIFY_API_TOKEN?.trim();
-    const errors = parsed.error.issues.map((issue) =>
-      token ? issue.message.replaceAll(token, '[redacted]') : issue.message,
-    );
+    const errors = parsed.error.issues.map((issue) => {
+      const message = token ? issue.message.replaceAll(token, '[redacted]') : issue.message;
+      return redactJwts(message);
+    });
     return { ok: false, errors, warnings };
   }
   const data = parsed.data;

@@ -306,5 +306,22 @@ describe('loadConfig', () => {
       expect(output.toLowerCase()).not.toContain(TOKEN.toLowerCase());
       expect(output).toContain('[redacted]');
     });
+
+    it('redacts a JWT-shaped token pasted into other variables when PRINTIFY_API_TOKEN is empty', () => {
+      const jwt = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJwcmludGlmeS1tY3AifQ.c2lnbmF0dXJl';
+      const result = loadConfig({
+        PRINTIFY_API_TOKEN: '',
+        PRINTIFY_SHOP_ID: jwt,
+        PRINTIFY_TOOLSETS: jwt,
+        PRINTIFY_ENABLE_ORDERS: jwt,
+        PRINTIFY_ENABLE_DESTRUCTIVE: jwt,
+        PRINTIFY_UPLOAD_DIRS: jwt,
+      });
+      const output = [...errorsOf(result), ...result.warnings].join('\n');
+      expect(output).not.toContain(jwt);
+      expect(output.toLowerCase()).not.toContain(jwt.toLowerCase());
+      expect(output).toContain('[redacted]');
+      expect(output).toContain('PRINTIFY_API_TOKEN is required');
+    });
   });
 });
