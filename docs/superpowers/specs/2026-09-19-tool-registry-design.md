@@ -79,7 +79,7 @@ src/cli.ts        # selection, client, skip log and instructions, once per proce
 test/support/
   json-rpc.ts     # new: connect, listTools, callTool over InMemoryTransport
 test/tools/
-  fixtures.ts     # new: fixture tools and a fixture config
+  fixtures.ts     # new: fixture tools, config, services and context
   check.test.ts   # new
   catalog.test.ts # new: ALL_TOOLS has no problems
   select.test.ts  # new
@@ -145,6 +145,9 @@ interface Tool {
 
 function defineTool<Input extends z.ZodObject>(definition: ToolDefinition<Input>): Tool;
 
+/** The annotations sent to clients: the tool's hints plus `openWorldHint: true`. */
+function mcpAnnotations(tool: Tool): ToolAnnotations & { openWorldHint: true };
+
 /** A deliberate refusal, e.g. a locked product. Becomes an `isError` result of kind `tool`. */
 class ToolError extends Error {
   override readonly name = 'ToolError';
@@ -181,23 +184,36 @@ these checks without writing them.
 | `readOnlyHint: true` → `destructiveHint: false`                      | `<name>: a read-only tool cannot be destructive`             |
 | `readOnlyHint: true` → no gate                                       | `<name>: a read-only tool cannot have a gate`                |
 | `gate: 'destructive'` → `destructiveHint: true`                      | `<name>: gate "destructive" needs destructiveHint: true`     |
-| `gate: 'orders'` → `readOnlyHint: false`                             | `<name>: gate "orders" needs readOnlyHint: false`            |
-| Input JSON Schema (`io: 'input'`) has `additionalProperties: false`  | `<name>: the input must be a z.strictObject`                 |
+| Input converts to JSON Schema (`io: 'input'`)                        | `<name>: the input cannot be converted to JSON Schema`       |
+| That JSON Schema has `additionalProperties: false`                   | `<name>: the input must be a z.strictObject`                 |
 
-A duplicate name is reported once per name. The SDK would also throw on a duplicate at
-registration, but only for tools that are enabled, so the test catches it earlier.
+- A tool's problems come in the table's order. Duplicate names follow after all of them, one line
+  per name. The SDK would also throw on a duplicate at registration, but only for tools that are
+  enabled, so the test catches it earlier.
+- `gate: 'orders'` needs `readOnlyHint: false`. The read-only rule above already enforces that, so
+  it has no row of its own and a mistake is reported once.
+- The SDK converts every input to JSON Schema for `tools/list`. An input it cannot convert, such as
+  one with `z.date()`, would break `tools/list` for every tool, so the rule catches it first.
 
 ## Selection
 
 ```ts
 type SkipReason = 'toolset' | Gate;
 
-interface Selection {
-  enabled: readonly Tool[];
-  skipped: readonly { tool: Tool; reason: SkipReason }[];
+interface SkippedTool {
+  tool: Tool;
+  reason: SkipReason;
 }
 
-function selectTools(tools: readonly Tool[], config: Config): Selection;
+interface Selection {
+  enabled: readonly Tool[];
+  skipped: readonly SkippedTool[];
+}
+
+/** The part of the configuration that decides which tools are registered. */
+type SelectionConfig = Pick<Config, 'toolsets' | 'enableOrders' | 'enableDestructive'>;
+
+function selectTools(tools: readonly Tool[], config: SelectionConfig): Selection;
 ```
 
 1. A tool whose toolset is not in `config.toolsets` is skipped as `'toolset'`.
@@ -347,13 +363,13 @@ server.registerTool(
 else.
 
 ```ts
-interface ServerOptions {
+interface CreateServerOptions {
   tools: readonly Tool[];
   services: ToolServices;
   instructions: string | undefined;
 }
 
-function createServer(options: ServerOptions): McpServer;
+function createServer(options: CreateServerOptions): McpServer;
 ```
 
 The serve path of `main` in `cli.ts`, once the config is valid:
@@ -459,12 +475,16 @@ Over `InMemoryTransport`, with raw JSON-RPC helpers in `test/support/json-rpc.ts
 
 ### `cli.test.ts`
 
-`vi.mock` replaces `src/tools/index.js` with fixture tools and wraps `createPrintifyClient` in a
-spy:
+`vi.mock` replaces `ALL_TOOLS` with an array that is empty unless a test fills it with the
+fixture tools, and `vi.mock(…, { spy: true })` spies on `createPrintifyClient` while keeping its
+implementation:
 
-- The skip lines and `tools: <n> of <m>` appear on stderr in the default configuration.
-- Calling the serve factory twice builds two servers, creates one client and logs nothing more.
-- The existing tests keep passing.
+- With the fixture tools and `PRINTIFY_TOOLSETS=shops,orders,products`, stderr holds the summary
+  with `tools: 1 of 5` and the three skip lines, and nothing more after the factory runs twice.
+- Calling the serve factory twice builds two servers and creates one client.
+- A server from the factory lists only the enabled tools, and its instructions name the skipped
+  ones.
+- The existing tests keep passing. Their summary lines gain `tools: 0 of 0`.
 
 ## Acceptance criteria mapping
 
@@ -510,7 +530,8 @@ The issue's other requirements:
    - #6: `createTestServer` calls `selectTools` and `createServer({ tools, services, instructions })`
      with a fake-`fetch` client. `expectToolError` must accept both the registry's
      `structuredContent.error` and the SDK's plain-text input validation error.
-   - #7–#19: define tools with `defineTool` and a `z.strictObject` input, append them to
-     `ALL_TOOLS`, throw `ToolError` for deliberate refusals, and return objects, never arrays. The
-     catalog test checks the rules.
+   - #7, as the first toolset, with a note that it applies to #7–#19: define tools with
+     `defineTool` and a `z.strictObject` input, append them to `ALL_TOOLS`, throw `ToolError` for
+     deliberate refusals, and return objects, never arrays. The catalog test checks the rules.
+     One comment instead of thirteen near-identical ones.
    - #21: `describeTools(ALL_TOOLS)` gives the tool reference.
