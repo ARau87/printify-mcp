@@ -1,8 +1,14 @@
-import type { CallToolResult } from '@modelcontextprotocol/server';
+import type { CallToolResult, McpServer } from '@modelcontextprotocol/server';
 import type { Logger } from '../log.js';
 import { PrintifyApiError } from '../printify/errors.js';
 import { redactJwts } from '../redact.js';
-import { ToolError, type Tool, type ToolContext } from './define.js';
+import {
+  ToolError,
+  mcpAnnotations,
+  type Tool,
+  type ToolContext,
+  type ToolServices,
+} from './define.js';
 import { dropNulls } from './shape.js';
 
 const BUG_HINT =
@@ -10,6 +16,21 @@ const BUG_HINT =
   'https://github.com/ARau87/printify-mcp/issues with the tool name and this message.';
 
 type ErrorFields = Record<string, string | number | undefined>;
+
+/** Registers every tool on `server`. Each call runs through `runTool`. */
+export function registerTools(
+  server: McpServer,
+  tools: readonly Tool[],
+  services: ToolServices,
+): void {
+  for (const tool of tools) {
+    server.registerTool(
+      tool.name,
+      { description: tool.description, inputSchema: tool.input, annotations: mcpAnnotations(tool) },
+      (input, ctx) => runTool(tool, input, { ...services, signal: ctx.mcpReq.signal }),
+    );
+  }
+}
 
 /**
  * Runs one tool call. The handler's data becomes `structuredContent` and a compact JSON text

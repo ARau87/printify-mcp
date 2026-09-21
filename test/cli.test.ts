@@ -1,8 +1,18 @@
 import { tmpdir } from 'node:os';
 import { McpServer } from '@modelcontextprotocol/server';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { main, type CliIo } from '../src/cli.js';
 import { PACKAGE_VERSION } from '../src/package-info.js';
+import { createPrintifyClient } from '../src/printify/client.js';
+import type { Tool } from '../src/tools/define.js';
+import { connect } from './support/json-rpc.js';
+import { FIXTURE_TOOLS } from './tools/fixtures.js';
+
+// ALL_TOOLS is empty until the first toolset lands. The tests below fill this stand-in.
+const allTools = vi.hoisted((): Tool[] => []);
+vi.mock('../src/tools/index.js', () => ({ ALL_TOOLS: allTools }));
+// Spies on createPrintifyClient while keeping the real implementation.
+vi.mock('../src/printify/client.js', { spy: true });
 
 const TOKEN = 'Tok-cli-5E4d3C2b1A';
 const VARIABLES = [
@@ -131,8 +141,8 @@ describe('main', () => {
       expect(factory()).toBeInstanceOf(McpServer);
       expect(output.stdout).toBe('');
       expect(output.stderr).toBe(
-        `printify-mcp: ${PACKAGE_VERSION} on stdio (toolsets: all; orders: off; destructive: off; ` +
-          'default shop: none; upload dirs: 0)\n',
+        `printify-mcp: ${PACKAGE_VERSION} on stdio (tools: 0 of 0; toolsets: all; orders: off; ` +
+          'destructive: off; default shop: none; upload dirs: 0)\n',
       );
     });
 
@@ -148,8 +158,9 @@ describe('main', () => {
       };
       expect(main([], env, io)).toBe(0);
       expect(output.stderr).toBe(
-        `printify-mcp: ${PACKAGE_VERSION} on stdio (toolsets: catalog, products; orders: on; ` +
-          'destructive: off; default shop: 12345; upload dirs: 1; api: http://localhost:8080)\n',
+        `printify-mcp: ${PACKAGE_VERSION} on stdio (tools: 0 of 0; toolsets: catalog, products; ` +
+          'orders: on; destructive: off; default shop: 12345; upload dirs: 1; ' +
+          'api: http://localhost:8080)\n',
       );
       expect(output.stderr).not.toContain(TOKEN);
     });
@@ -183,6 +194,57 @@ describe('main', () => {
       options.onerror(new Error('stdout closed'));
       expect(output.stderr).toContain('printify-mcp: error: stdout closed\n');
       expect(output.stdout).toBe('');
+    });
+  });
+
+  describe('tools', () => {
+    const env = { PRINTIFY_API_TOKEN: TOKEN, PRINTIFY_TOOLSETS: 'shops,orders,products' };
+
+    afterEach(() => {
+      allTools.length = 0;
+    });
+
+    it('logs the tool count and the skipped tools once', () => {
+      allTools.push(...FIXTURE_TOOLS);
+      const { io, output, served } = fakeIo();
+      expect(main([], env, io)).toBe(0);
+      const call = served[0];
+      if (call === undefined) throw new Error('serve was not called');
+      const [factory] = call;
+      factory();
+      factory();
+      expect(output.stderr).toBe(
+        `printify-mcp: ${PACKAGE_VERSION} on stdio (tools: 1 of 5; toolsets: shops, products, ` +
+          'orders; orders: off; destructive: off; default shop: none; upload dirs: 0)\n' +
+          'printify-mcp: PRINTIFY_ENABLE_ORDERS is off, skipped: create_order\n' +
+          'printify-mcp: PRINTIFY_ENABLE_DESTRUCTIVE is off, skipped: delete_product\n' +
+          'printify-mcp: not in PRINTIFY_TOOLSETS, skipped: webhooks (list_webhooks, ' +
+          'delete_webhook)\n',
+      );
+    });
+
+    it('creates one client for every server the factory builds', () => {
+      vi.mocked(createPrintifyClient).mockClear();
+      const { io, served } = fakeIo();
+      main([], env, io);
+      const call = served[0];
+      if (call === undefined) throw new Error('serve was not called');
+      const [factory] = call;
+      expect(factory()).not.toBe(factory());
+      expect(createPrintifyClient).toHaveBeenCalledTimes(1);
+    });
+
+    it('serves the enabled tools with instructions for the skipped ones', async () => {
+      allTools.push(...FIXTURE_TOOLS);
+      const { io, served } = fakeIo();
+      main([], env, io);
+      const call = served[0];
+      if (call === undefined) throw new Error('serve was not called');
+      const [factory] = call;
+      const mcp = await connect(factory());
+      expect((await mcp.listTools()).map((tool) => tool.name)).toEqual(['list_shops']);
+      expect(mcp.initialized.instructions).toContain('(create_order)');
+      await mcp.close();
     });
   });
 });
