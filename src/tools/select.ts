@@ -97,7 +97,7 @@ function namesSkippedFor(skipped: readonly SkippedTool[], gate: Gate): string | 
   return names.length === 0 ? undefined : names.join(', ');
 }
 
-/** `webhooks (list_webhooks, create_webhook), support (…)` in `TOOLSETS` order, or `undefined`. */
+/** `support (…), webhooks (list_webhooks, create_webhook)` in `TOOLSETS` order, or `undefined`. */
 function toolsetsSkipped(skipped: readonly SkippedTool[]): string | undefined {
   const groups = TOOLSETS.flatMap((toolset) => {
     const names = skipped
