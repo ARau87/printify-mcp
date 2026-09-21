@@ -233,7 +233,7 @@ order `orders`, `destructive`, `toolset`. `cli.ts` writes them with `log.info`, 
 ```text
 PRINTIFY_ENABLE_ORDERS is off, skipped: create_order, create_express_order, send_order_to_production, cancel_order
 PRINTIFY_ENABLE_DESTRUCTIVE is off, skipped: delete_product, disconnect_shop
-not in PRINTIFY_TOOLSETS, skipped: webhooks (list_webhooks, create_webhook), support (create_refund_request)
+not in PRINTIFY_TOOLSETS, skipped: support (create_refund_request), webhooks (list_webhooks, create_webhook)
 ```
 
 Toolsets follow the order of `TOOLSETS`, and tools the order of `ALL_TOOLS`. The existing summary
@@ -253,7 +253,7 @@ reason in the skip log's order (only for reasons that skipped something), and th
 Some Printify tools are turned off in this server's configuration. When the user asks for something they cover, tell them it is turned off and how to turn it on.
 - Order tools that can spend money (create_order, create_express_order, send_order_to_production, cancel_order): set PRINTIFY_ENABLE_ORDERS=true.
 - Irreversible tools (delete_product, disconnect_shop): set PRINTIFY_ENABLE_DESTRUCTIVE=true.
-- Toolsets not enabled: webhooks (list_webhooks, create_webhook), support (create_refund_request). Add their names to PRINTIFY_TOOLSETS.
+- Toolsets not enabled: support (create_refund_request), webhooks (list_webhooks, create_webhook). Add their names to PRINTIFY_TOOLSETS.
 The user sets these in the "env" block of the printify-mcp entry in their MCP client config, then restarts the client.
 ```
 

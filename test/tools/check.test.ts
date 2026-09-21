@@ -2,13 +2,17 @@ import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { toolProblems } from '../../src/tools/check.js';
 import type { ToolDefinition } from '../../src/tools/define.js';
-import { READ_ONLY, WRITE, fixtureTool, listShops } from './fixtures.js';
+import { FIXTURE_TOOLS, READ_ONLY, WRITE, fixtureTool, listShops } from './fixtures.js';
 
 const LONG_NAME = 'a'.repeat(65);
 
 describe('toolProblems', () => {
   it('finds nothing wrong with valid tools', () => {
     expect(toolProblems([fixtureTool(), listShops])).toEqual([]);
+  });
+
+  it('finds nothing wrong with valid gated tools, including both gates', () => {
+    expect(toolProblems(FIXTURE_TOOLS)).toEqual([]);
   });
 
   it.each(['list_shops', 'get_product_gpsr', 'a', 'x2', 'a'.repeat(64)])(

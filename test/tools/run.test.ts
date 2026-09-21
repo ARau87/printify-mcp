@@ -139,6 +139,19 @@ describe('runTool', () => {
     expect(logged).toEqual([]);
   });
 
+  it('redacts a JWT in the message and hint of a ToolError', async () => {
+    const error = new ToolError(`Token ${JWT} is locked.`, `Rotate ${JWT} and try again.`);
+    const { ctx } = fixtureContext();
+    const result = await runTool(failing(error), {}, ctx);
+    expect(result.structuredContent).toStrictEqual({
+      error: {
+        kind: 'tool',
+        message: 'Token [redacted] is locked.',
+        hint: 'Rotate [redacted] and try again.',
+      },
+    });
+  });
+
   it('leaves out the hint of a ToolError that has none', async () => {
     const { ctx } = fixtureContext();
     const result = await runTool(failing(new ToolError('No shop.')), {}, ctx);

@@ -223,7 +223,7 @@ describe('main', () => {
       );
     });
 
-    it('creates one client for every server the factory builds', () => {
+    it('creates one client however many servers the factory builds', () => {
       vi.mocked(createPrintifyClient).mockClear();
       const { io, served } = fakeIo();
       main([], env, io);

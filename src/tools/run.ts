@@ -74,7 +74,11 @@ function errorFields(tool: Tool, error: unknown, log: Logger): ErrorFields {
     };
   }
   if (error instanceof ToolError) {
-    return { kind: 'tool', message: error.message, hint: error.hint };
+    return {
+      kind: 'tool',
+      message: redactJwts(error.message),
+      hint: error.hint === undefined ? undefined : redactJwts(error.hint),
+    };
   }
   const message = error instanceof Error ? error.message : String(error);
   const detail = error instanceof Error ? (error.stack ?? error.message) : String(error);
