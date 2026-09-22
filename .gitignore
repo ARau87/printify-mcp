@@ -73,3 +73,4 @@ Desktop.ini
 # Claude Code (personal settings; shared .claude/settings.json stays tracked)
 .claude/settings.local.json
 CLAUDE.local.md
+.claude/worktrees/

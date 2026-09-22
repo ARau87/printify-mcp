@@ -1,13 +1,13 @@
 import { readFileSync } from 'node:fs';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { apiPath } from '../src/printify/path.js';
-import { createServer } from '../src/server.js';
-import { defineTool, type Tool } from '../src/tools/define.js';
-import { selectTools, serverInstructions, type SelectionConfig } from '../src/tools/select.js';
-import { TOOLSETS } from '../src/toolsets.js';
-import { connect } from './support/json-rpc.js';
-import { FIXTURE_TOOLS, READ_ONLY, deleteProduct, fixtureServices } from './tools/fixtures.js';
+import { defineTool } from '../src/tools/define.js';
+import { notFoundBody } from './fixtures/errors.js';
+import { expectToolData, expectToolError } from './support/expect.js';
+import { json } from './support/fake-api.js';
+import { createTestServer } from './support/harness.js';
+import { FIXTURE_TOOLS, READ_ONLY, deleteProduct } from './tools/fixtures.js';
 
 const packageJson = JSON.parse(
   readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
@@ -28,51 +28,35 @@ const getProduct = defineTool({
   }),
 });
 
-function fakeFetch(status: number, body: unknown) {
-  return vi.fn<typeof globalThis.fetch>(() =>
-    Promise.resolve(
-      new Response(JSON.stringify(body), {
-        status,
-        headers: { 'Content-Type': 'application/json' },
-      }),
-    ),
-  );
-}
-
-function serve(
-  tools: readonly Tool[],
-  options: { fetch?: typeof globalThis.fetch; instructions?: string } = {},
-) {
-  const { services } = fixtureServices(options.fetch);
-  return connect(createServer({ tools, services, instructions: options.instructions }));
-}
+const PRODUCT_ROUTE = `GET /v1/shops/12/products/${PRODUCT_ID}.json` as const;
 
 describe('createServer', () => {
   it('answers initialize with the name and version from package.json', async () => {
-    const mcp = await serve([]);
-    expect(mcp.initialized).toMatchObject({
-      serverInfo: { name: packageJson.name, version: packageJson.version },
-      capabilities: { tools: { listChanged: false } },
+    const { mcp } = await createTestServer({ tools: [] });
+    expect(mcp.getServerVersion()).toEqual({
+      name: packageJson.name,
+      version: packageJson.version,
     });
-    expect(mcp.initialized).not.toHaveProperty('instructions');
-    await mcp.close();
+    expect(mcp.getServerCapabilities()).toEqual({ tools: { listChanged: false } });
+    expect(mcp.getInstructions()).toBeUndefined();
   });
 
-  it('sends the instructions in the initialize result', async () => {
-    const mcp = await serve([], { instructions: 'Some Printify tools are turned off.' });
-    expect(mcp.initialized).toHaveProperty('instructions', 'Some Printify tools are turned off.');
-    await mcp.close();
+  it('sends instructions naming the tools that are turned off', async () => {
+    const { mcp } = await createTestServer({ tools: FIXTURE_TOOLS });
+    expect(mcp.getInstructions()).toContain('create_order');
   });
 
   it('answers tools/list with an empty list when there are no tools', async () => {
-    const mcp = await serve([]);
-    expect(await mcp.listTools()).toEqual([]);
-    await mcp.close();
+    const { mcp } = await createTestServer({ tools: [] });
+    expect((await mcp.listTools()).tools).toEqual([]);
   });
 
   it('lists a tool with its hints, openWorldHint and a strict input schema', async () => {
-    const mcp = await serve([deleteProduct]);
-    expect(await mcp.listTools()).toEqual([
+    const { mcp } = await createTestServer({
+      tools: [deleteProduct],
+      env: { PRINTIFY_ENABLE_DESTRUCTIVE: 'true' },
+    });
+    expect((await mcp.listTools()).tools).toEqual([
       {
         name: 'delete_product',
         description: 'Deletes a product.',
@@ -90,79 +74,70 @@ describe('createServer', () => {
         },
       },
     ]);
-    await mcp.close();
   });
 
   describe.each([
-    ['destructive', 'delete_product', { enableDestructive: true }],
-    ['orders', 'create_order', { enableOrders: true }],
-  ] as const)('a tool gated as %s', (_, name, flagOn) => {
-    const flagsOff: SelectionConfig = {
-      toolsets: new Set(TOOLSETS),
-      enableOrders: false,
-      enableDestructive: false,
-    };
-
-    async function listedNames(config: SelectionConfig) {
-      const { enabled, skipped } = selectTools(FIXTURE_TOOLS, config);
-      const mcp = await serve(enabled, { instructions: serverInstructions(skipped) });
-      const listed = (await mcp.listTools()).map((tool) => tool.name);
-      await mcp.close();
-      return { listed, instructions: mcp.initialized.instructions };
-    }
-
+    ['destructive', 'delete_product', 'PRINTIFY_ENABLE_DESTRUCTIVE'],
+    ['orders', 'create_order', 'PRINTIFY_ENABLE_ORDERS'],
+  ] as const)('a tool gated as %s', (_gate, name, variable) => {
     it('is absent from tools/list without its flag, and the instructions name it', async () => {
-      const { listed, instructions } = await listedNames(flagsOff);
-      expect(listed).not.toContain(name);
-      expect(instructions).toContain(name);
+      const { mcp } = await createTestServer({ tools: FIXTURE_TOOLS });
+      expect((await mcp.listTools()).tools.map((tool) => tool.name)).not.toContain(name);
+      expect(mcp.getInstructions()).toContain(name);
     });
 
     it('is present in tools/list with its flag', async () => {
-      const { listed } = await listedNames({ ...flagsOff, ...flagOn });
-      expect(listed).toContain(name);
+      const { mcp } = await createTestServer({
+        tools: FIXTURE_TOOLS,
+        env: { [variable]: 'true' },
+      });
+      expect((await mcp.listTools()).tools.map((tool) => tool.name)).toContain(name);
     });
   });
 
   it('returns a successful call as structured content and JSON text', async () => {
-    const fetch = fakeFetch(200, { id: PRODUCT_ID, title: 'Tee', sku: null });
-    const mcp = await serve([getProduct], { fetch });
-    const product = { id: PRODUCT_ID, title: 'Tee' };
-    expect(await mcp.callTool('get_product', { product_id: PRODUCT_ID })).toEqual({
-      content: [{ type: 'text', text: JSON.stringify({ product }) }],
-      structuredContent: { product },
+    const { call, api } = await createTestServer({
+      tools: [getProduct],
+      routes: { [PRODUCT_ROUTE]: { id: PRODUCT_ID, title: 'Tee', sku: null } },
     });
-    await mcp.close();
+    const result = await call('get_product', { product_id: PRODUCT_ID });
+    // The null is dropped, and expectToolData checks the text block against it.
+    expect(expectToolData(result)).toEqual({ product: { id: PRODUCT_ID, title: 'Tee' } });
+    api.expectRequest('GET', `/v1/shops/12/products/${PRODUCT_ID}.json`);
   });
 
   it('returns a Printify 404 as an isError result with the hint', async () => {
-    const fetch = fakeFetch(404, { error: 'Not found', request_id: 'req-1' });
-    const mcp = await serve([getProduct], { fetch });
-    const error = {
+    const { call, api } = await createTestServer({
+      tools: [getProduct],
+      routes: { [PRODUCT_ROUTE]: json(notFoundBody(), 404) },
+    });
+    expectToolError(await call('get_product', { product_id: PRODUCT_ID }), {
       kind: 'http',
       request: `GET /v1/shops/12/products/${PRODUCT_ID}.json`,
       status: 404,
       message: 'Not found',
       request_id: 'req-1',
       hint: 'Not found. Check the id, and that it belongs to this shop.',
-    };
-    expect(await mcp.callTool('get_product', { product_id: PRODUCT_ID })).toEqual({
-      isError: true,
-      content: [{ type: 'text', text: JSON.stringify({ error }) }],
-      structuredContent: { error },
     });
-    expect(fetch).toHaveBeenCalledTimes(1);
-    await mcp.close();
+    // A 404 is never retried, so exactly one request was sent.
+    expect(api.requests).toHaveLength(1);
   });
 
   it('rejects an unknown argument before the handler runs', async () => {
-    const fetch = fakeFetch(200, {});
-    const mcp = await serve([getProduct], { fetch });
-    const result = await mcp.callTool('get_product', { product_id: PRODUCT_ID, detial: 'full' });
-    expect(result).toMatchObject({ isError: true });
-    expect(JSON.stringify(result.content)).toContain(
-      'Input validation error: Invalid arguments for tool get_product: Unrecognized key: \\"detial\\"',
+    const { call, api } = await createTestServer({
+      tools: [getProduct],
+      routes: { [PRODUCT_ROUTE]: { id: PRODUCT_ID } },
+    });
+    const fields = expectToolError(
+      await call('get_product', {
+        product_id: PRODUCT_ID,
+        detial: 'full',
+      }),
     );
-    expect(fetch).not.toHaveBeenCalled();
-    await mcp.close();
+    expect(fields.kind).toBe('validation');
+    expect(fields.message).toContain(
+      'Input validation error: Invalid arguments for tool get_product: Unrecognized key: "detial"',
+    );
+    expect(api.requests).toEqual([]);
   });
 });

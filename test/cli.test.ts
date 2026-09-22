@@ -5,7 +5,7 @@ import { main, type CliIo } from '../src/cli.js';
 import { PACKAGE_VERSION } from '../src/package-info.js';
 import { createPrintifyClient } from '../src/printify/client.js';
 import type { Tool } from '../src/tools/define.js';
-import { connect } from './support/json-rpc.js';
+import { connectClient } from './support/harness.js';
 import { FIXTURE_TOOLS } from './tools/fixtures.js';
 
 // ALL_TOOLS is empty until the first toolset lands. The tests below fill this stand-in.
@@ -241,9 +241,9 @@ describe('main', () => {
       const call = served[0];
       if (call === undefined) throw new Error('serve was not called');
       const [factory] = call;
-      const mcp = await connect(factory());
-      expect((await mcp.listTools()).map((tool) => tool.name)).toEqual(['list_shops']);
-      expect(mcp.initialized.instructions).toContain('(create_order)');
+      const mcp = await connectClient(factory());
+      expect((await mcp.listTools()).tools.map((tool) => tool.name)).toEqual(['list_shops']);
+      expect(mcp.getInstructions()).toContain('(create_order)');
       await mcp.close();
     });
   });

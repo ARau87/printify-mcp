@@ -10,6 +10,7 @@ import {
   type ToolDefinition,
   type ToolServices,
 } from '../../src/tools/define.js';
+import { createFakeApi, type Routes } from '../support/fake-api.js';
 
 export const TOKEN = 'Tok-tools-4D3c2B1a';
 
@@ -86,30 +87,32 @@ export function fixtureConfig(overrides: Partial<Config> = {}): Config {
   return { ...result.config, ...overrides };
 }
 
-/** Fails any test that sends a request it did not expect. */
-function unexpectedFetch(): Promise<Response> {
-  throw new Error('the test did not expect a Printify request');
-}
-
-/** Services whose client uses `fetch` and whose log lines land in `logged`. */
-export function fixtureServices(fetch: typeof globalThis.fetch = unexpectedFetch) {
+/**
+ * Services whose client answers from `routes` and whose log lines land in `logged`. A request
+ * that matches no route is answered with 418 and named in the result, rather than looking like a
+ * network failure; `api.assertNoUnmatched()` reports it when the tool swallowed the error.
+ */
+export function fixtureServices(routes: Routes = {}) {
+  const api = createFakeApi(routes);
   const logged: string[] = [];
   const config = fixtureConfig();
   const services: ToolServices = {
-    client: createPrintifyClient({ token: config.token, baseUrl: config.apiBaseUrl, fetch }),
+    client: createPrintifyClient({
+      token: config.token,
+      baseUrl: config.apiBaseUrl,
+      fetch: api.fetch,
+    }),
     config,
     log: createLogger((text) => {
       logged.push(text);
     }),
   };
-  return { services, logged };
+  return { services, logged, api };
 }
 
 /** A tool call's context: `fixtureServices` plus a signal that has not aborted, by default. */
-export function fixtureContext(
-  options: { fetch?: typeof globalThis.fetch; signal?: AbortSignal } = {},
-) {
-  const { services, logged } = fixtureServices(options.fetch);
+export function fixtureContext(options: { routes?: Routes; signal?: AbortSignal } = {}) {
+  const { services, logged, api } = fixtureServices(options.routes);
   const ctx: ToolContext = { ...services, signal: options.signal ?? new AbortController().signal };
-  return { ctx, logged };
+  return { ctx, logged, api };
 }
