@@ -39,6 +39,13 @@ committed.
   message intact after exactly one `fetch`. Any 5xx would instead carry "Printify had a server
   error. Try again in a moment.", which would read as a Printify outage rather than a test bug.
 - **A throw in `onTestFinished` fails the test** and reports the thrown message as the failure.
+- **`McpServer` has `close()`,** so the harness closes both ends of the pair.
+- **Three type-level constraints**, found by compiling the modules against this repository's
+  `tsconfig.json` and eslint config while planning: `structuredContent` is typed as nullable, so
+  `expectToolData` must narrow it before returning; `noUncheckedIndexedAccess` makes every route
+  lookup `Route | undefined`, which is what lets a missing key stand for "no route declared"; and
+  interface members must be function-typed properties, not methods, or destructuring them trips
+  `@typescript-eslint/unbound-method`.
 - **The two error result shapes** are as #5's notes describe: the registry's
   `structuredContent.error`, and the SDK's text-only
   `Input validation error: Invalid arguments for tool <name>: …` with no `structuredContent`.
@@ -80,6 +87,8 @@ committed.
 test/support/fake-api.ts      new      createFakeApi and the response helpers
 test/support/harness.ts       new      createTestServer
 test/support/expect.ts        new      expectToolData, expectToolError
+test/support/fake-api.test.ts new      the fake API's tests
+test/support/expect.test.ts   new      the assertion helpers' tests
 test/support/harness.test.ts  new      the harness's own tests
 test/support/json-rpc.ts      deleted  replaced by the real Client
 test/fixtures/shops.ts        new      SHOP, SHOPS, shop(overrides)
@@ -115,27 +124,41 @@ export interface FakeRequest {
   signal: AbortSignal;
 }
 
-export type Responder = (request: FakeRequest) => Response | Promise<Response>;
+/** Answers one request. Returning anything but a `Response` sends it as a 200 JSON body. */
+export type Responder = (request: FakeRequest) => unknown;
+
+/** Anything sent as a JSON body. `object`, not `Record<string, unknown>`, so that a fixture
+ * declared as an interface is assignable. */
+export type JsonBody = object | string | number | boolean | null;
 
 /**
- * What a route answers with. Discriminated at runtime, not by the type: a `Response` is used as
- * is, a `Responder` is called, and anything else is sent as a 200 JSON body. Writing it as a
- * union would be a lie — `unknown` absorbs the other two members.
+ * What a route answers with, discriminated at runtime: a `Response` is used as is, a `Responder`
+ * is called, and anything else is sent as a 200 JSON body. `Responder` is a member of the union
+ * rather than the whole type being `unknown`, because only a union with a function member gives
+ * a route written as `(request) => …` a typed parameter.
  */
-export type Route = unknown;
+export type Route = Response | Responder | JsonBody;
 
+export type Routes = Readonly<Record<RouteKey, Route>>;
+
+// Every member is a function-typed property rather than a method, because destructuring a method
+// off the object — `const { call, api } = await createTestServer()` — trips
+// @typescript-eslint/unbound-method, which this repository treats as an error.
 export interface FakeApi {
   fetch: typeof globalThis.fetch;
   requests: readonly FakeRequest[];
   /** Requests that matched no route. */
   unmatched: readonly FakeRequest[];
   /** Asserts exactly one matching request and returns it. */
-  expectRequest(method: HttpMethod, path: string, body?: unknown): FakeRequest;
+  expectRequest: (method: HttpMethod, path: string, body?: unknown) => FakeRequest;
+  /** Returns the unmatched requests and forgets them, so the teardown check passes. Only a test
+   * that means to provoke a miss calls this. */
+  takeUnmatched: () => readonly FakeRequest[];
   /** Throws, listing them, when any request went unmatched. Called by the teardown hook. */
-  assertNoUnmatched(): void;
+  assertNoUnmatched: () => void;
 }
 
-export function createFakeApi(routes?: Readonly<Record<RouteKey, Route>>): FakeApi;
+export function createFakeApi(routes?: Routes): FakeApi;
 ```
 
 ### Matching
@@ -157,7 +180,7 @@ json(body: unknown, status = 200, headers?: Record<string, string>): Response
 text(body: string, status = 200): Response
 empty(status = 204): Response
 inTurn(...replies: Route[]): Responder   // nth request gets the nth reply, then the last repeats
-fails(cause?: unknown): Responder        // rejects, for the network-error and retry paths
+fails(cause?: Error): Responder          // rejects, for the network-error and retry paths
 never(): Responder                       // answers only once the request's signal aborts
 ```
 
@@ -366,28 +389,44 @@ README; #7 adds the "Adding a tool" section on top of this one.
 
 ## Tests
 
-### `test/support/harness.test.ts`
+Each module is tested through its own entry point, so a failure names the layer that broke. All
+three are written against the fixture tools rather than real ones, so they do not change when
+toolsets land.
 
-The harness's own coverage, written against the fixture tools rather than real ones so it does not
-change when toolsets land:
+### `test/support/fake-api.test.ts`
+
+Drives `api.fetch` directly, with no MCP in the way:
+
+- serves a bare value as a 200 JSON body, a `json(body, status)` as that status, and `empty()` as
+  an empty body;
+- answers the same route twice, which a `Response` can only do because it is cloned;
+- answers a sequence with `inTurn`, and repeats the last reply once it is exhausted;
+- passes the query to a responder without the query taking part in matching;
+- rejects a malformed route key at construction — a missing space, an unknown method, and a path
+  that does not start with `/`;
+- records an unmatched request and answers it with 418 and the message naming the declared routes;
+- `assertNoUnmatched` throws and names every unmatched request; `takeUnmatched` returns and clears
+  them. Both are called directly, since a test cannot assert its own teardown failure;
+- `expectRequest` matches on method, path and body, and its failure message lists the recorded
+  requests.
+
+### `test/support/expect.test.ts`
+
+Runs against `CallToolResult` literals, so no server is needed:
+
+- `expectToolData` returns the data, and rejects an error result, a result without
+  `structuredContent`, and one whose text block and `structuredContent` disagree;
+- `expectToolError` normalises a registry error and an SDK validation error, rejects a successful
+  result, and matches the `expected` fields when they are given.
+
+### `test/support/harness.test.ts`
 
 - lists tools and calls one tool end to end, asserting the request reached the fake API — the
   issue's first acceptance criterion in one test;
-- serves a bare value as a 200 JSON body, a `json(body, status)` as that status, and `empty()` as
-  an empty body;
-- answers a sequence with `inTurn`, and repeats the last reply after it is exhausted;
-- passes the query to a responder without the query affecting matching;
-- rejects a malformed route key at construction;
-- answers an unmatched request with 418, records it in `api.unmatched`, and surfaces the missing
-  route in the tool result's message;
-- `assertNoUnmatched` throws and names every unmatched request — called directly, since a test
-  cannot assert its own teardown failure;
-- `expectRequest` matches on method, path and body, and its failure message lists the recorded
-  requests;
-- `expectToolData` rejects a result whose text block and `structuredContent` disagree;
-- `expectToolError` normalises a registry error and an SDK validation error;
 - `env` reaches the real `loadConfig`: `PRINTIFY_TOOLSETS` and the gate flags change which tools
-  are listed, and an invalid value throws from `createTestServer`;
+  are listed, the instructions name what was skipped, and an invalid value throws from
+  `createTestServer`;
+- a tool that hits no declared route surfaces the missing route in its result, with no hint;
 - a client cancellation aborts the handler's signal, as above.
 
 ### `test/server.test.ts`
