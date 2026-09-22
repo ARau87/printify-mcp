@@ -5,7 +5,11 @@ import { serveStdio } from '@modelcontextprotocol/server/stdio';
 import { DEFAULT_API_BASE_URL, loadConfig, type Config, type Env } from './config.js';
 import { createLogger } from './log.js';
 import { PACKAGE_VERSION } from './package-info.js';
+import { createPrintifyClient } from './printify/client.js';
 import { createServer } from './server.js';
+import type { ToolServices } from './tools/define.js';
+import { ALL_TOOLS } from './tools/index.js';
+import { selectTools, serverInstructions, skipLogLines, type Selection } from './tools/select.js';
 import { TOOLSETS } from './toolsets.js';
 
 export interface CliIo {
@@ -83,12 +87,14 @@ function configErrorText(errors: readonly string[]): string {
   );
 }
 
-function summary(config: Config): string {
+function summary(config: Config, selection: Selection): string {
+  const total = selection.enabled.length + selection.skipped.length;
   const toolsets =
     config.toolsets.size === TOOLSETS.length
       ? 'all'
       : TOOLSETS.filter((toolset) => config.toolsets.has(toolset)).join(', ');
   const parts = [
+    `tools: ${String(selection.enabled.length)} of ${String(total)}`,
     `toolsets: ${toolsets}`,
     `orders: ${config.enableOrders ? 'on' : 'off'}`,
     `destructive: ${config.enableDestructive ? 'on' : 'off'}`,
@@ -130,11 +136,19 @@ export function main(argv: readonly string[], env: Env, io: CliIo = defaultIo): 
     return 1;
   }
 
-  io.serve(createServer, {
+  // Everything below happens once per process, however often serve calls the factory: one
+  // client, and so one rate limiter, for every server instance.
+  const { config } = result;
+  const selection = selectTools(ALL_TOOLS, config);
+  const client = createPrintifyClient({ token: config.token, baseUrl: config.apiBaseUrl });
+  const services: ToolServices = { client, config, log };
+  const instructions = serverInstructions(selection.skipped);
+  io.serve(() => createServer({ tools: selection.enabled, services, instructions }), {
     onerror: (error) => {
       log.error(error.message);
     },
   });
-  log.info(summary(result.config));
+  log.info(summary(config, selection));
+  for (const line of skipLogLines(selection.skipped)) log.info(line);
   return 0;
 }
