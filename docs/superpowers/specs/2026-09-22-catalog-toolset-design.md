@@ -70,21 +70,16 @@ object.
 4. **No in-flight request sharing.** Two concurrent misses on the same key each send a request. One
    extra catalog request is harmless, and sharing one in-flight promise would tie one caller's
    cancellation to another's. #7's shop directory makes the same choice.
-5. **Tests run through `runTool`, not the harness.** The acceptance criteria ask for harness tests,
-   but #6 has not landed. The toolset tests use `runTool` with a stand-in for #6's fake API that has
-   the same route keys and the same answer to an unmatched request, so moving onto
-   `createFakeApi` is an import swap. If #6 has merged when implementation starts, the tests use it
-   and the stand-in is not written.
-6. **#7's conventions, whichever branch lands first.** #7's spec settles that each toolset lives in
+5. **#7's conventions, whichever branch lands first.** #7's spec settles that each toolset lives in
    `src/tools/<toolset>.ts`, exports `<toolset>Tools`, and is wired in through `TOOLS_BY_TOOLSET`
    in `src/tools/index.ts`; toolset tests take their tools from `ALL_TOOLS`. If #7 has merged when
    implementation starts, #8 changes one line (`catalog: []` → `catalog: catalogTools`). If not, #8
    introduces `TOOLS_BY_TOOLSET`, `ALL_TOOLS` and the per-key toolset check exactly as #7's spec
    defines them, with `shops: []`, so the two branches conflict only on neighbouring lines.
-7. **The toolset tests go in `test/tools/catalog-toolset.test.ts`.** `test/tools/catalog.test.ts`
+6. **The toolset tests go in `test/tools/catalog-toolset.test.ts`.** `test/tools/catalog.test.ts`
    already holds the rule check over `ALL_TOOLS`, and #7 edits it. Renaming it here would turn #7's
    edit into a modify/delete conflict on a nine-line file.
-8. **`get_blueprint` calls its own endpoint.** Only the single-blueprint response has `tags`, so it
+7. **`get_blueprint` calls its own endpoint.** Only the single-blueprint response has `tags`, so it
    does not read from the cached full list.
 
 ## Files
@@ -98,16 +93,18 @@ src/printify/
   errors.ts                 # invalidResponseError gains 'an unexpected catalog response'
 src/tools/
   catalog.ts                # new: the six tools and catalogTools
-  index.ts                  # catalog: catalogTools (or TOOLS_BY_TOOLSET, see decision 6)
+  index.ts                  # catalog: catalogTools (or TOOLS_BY_TOOLSET, see decision 5)
   define.ts                 # ToolServices gains catalog
 src/cli.ts                  # creates the catalog once per process
 test/
   cache.test.ts             # new
   cli.test.ts               # one catalog per process
+test/support/
+  harness.ts                # the server's services gain catalog
 test/printify/
   catalog.test.ts           # new: requests, parsing and caching
 test/tools/
-  catalog-toolset.test.ts   # new: the six tools through runTool
+  catalog-toolset.test.ts   # new: the six tools through the harness
   catalog.test.ts           # the rule check now sees six tools; the per-key check if #7 has not merged
   fixtures.ts               # services gain catalog
 test/fixtures/
@@ -462,34 +459,39 @@ With an injected `now`:
 
 ### `test/printify/catalog.test.ts`
 
-`createCatalog` with a fake `PrintifyClient` whose `request` is a `vi.fn`, and an injected `now`:
+`createCatalog` over a real `createPrintifyClient` whose `fetch` is #6's `createFakeApi`, with an
+injected `now`:
 
-- each method sends a GET to its documented path, with the signal; the shipping path includes
-  `{print_provider_id}`;
-- `variants` sends `show-out-of-stock: 1` only when `showOutOfStock` is true;
+- each method sends a GET to its documented path, with the caller's signal; the shipping path
+  includes `{print_provider_id}`;
+- `variants` sends `show-out-of-stock=1` only when `showOutOfStock` is true, read from the recorded
+  request's `query`;
 - a second call within the TTL sends no request; after 24 h (blueprints and providers) or 1 h
   (variants and shipping) it sends one again; different ids, and the two stock settings, are
   separate entries;
-- a rejected request, an aborted one and a response that fails its schema are not cached, and the
-  last is an `invalid_response` error;
+- a 404 (`json(notFoundBody(), 404)`), an aborted request (`never()` and an aborted signal) and a
+  response that fails its schema are not cached, and the last is an `invalid_response` error;
 - lenient fields become `undefined` without failing the response; a variant with a non-string
   option value fails it.
 
+No route answers 5xx or 429: the client retries those on real timers.
+
 ### `test/tools/catalog-toolset.test.ts`
 
-Through `runTool`, with `fixtureContext({ fetch: api.fetch })`. Each tool is taken from `ALL_TOOLS`
-by name, so a tool that was never wired in fails its own tests. Input is passed through
-`tool.input.parse(args)` first, as the SDK would, so the defaults apply.
+Through #6's harness: `createTestServer({ routes })` with its default tools, `ALL_TOOLS`, so a tool
+that was never wired in fails its own tests. Calls go through `call(name, args)`, and so through
+the SDK's input validation and defaults; results are read with `expectToolData` and
+`expectToolError`. Every test starts with a cold cache, because each `createTestServer` builds its
+own services.
 
-The fake API is a stand-in for #6's `createFakeApi` with the same rules: route keys are
-`METHOD /path` without the query, a value is sent as a 200 JSON body, a `Response` is sent as is,
-a function gets the recorded request (with its `query`) and returns either. Every request is
-recorded in `api.requests`. An unmatched request is recorded in `api.unmatched` and answered with a
-418 naming the missing route; `afterEach` asserts `api.unmatched` is empty. If #6 has merged, the
-real `createFakeApi` is used instead.
+Route keys cannot carry a query string: one with `?` passes the key check and then never matches
+(a #6 follow-up). The variants route is therefore a responder that reads
+`request.query['show-out-of-stock']` and answers with the full list or the in-stock list.
 
 - **Every tool:** the requests it sends, its output from the documented fixtures, a second call
-  that sends no further request, and a JSON text with no `images` key.
+  that sends no further request (`api.expectRequest` finds exactly one), and a JSON text with no
+  `images` key.
+- **`tools/list`:** all six are listed with `readOnlyHint: true` and `openWorldHint: true`.
 - **`get_blueprint`:** `include_images: true` adds `images`.
 - **`list_blueprint_providers`:** locations are joined by id; a provider missing from the provider
   list has no `location`.
@@ -499,15 +501,18 @@ real `createFakeApi` is used instead.
     `option_values`;
   - `show_out_of_stock: true` sends both requests and marks `in_stock` on every variant;
   - without the flag, one request and no `in_stock`;
-  - `tool.input.safeParse` rejects an empty `colors` array.
+  - an empty `colors` array is `expectToolError(result, { kind: 'validation' })`, and no request
+    is sent.
 - **`get_print_provider`:** a provider with 60 blueprints returns 50, `blueprint_count: 60` and
   `blueprints_truncated: true`; one with 50 has no `blueprints_truncated`.
-- **Errors:** a 404 from the fake API gives an `http` error result with status 404.
+- **Errors:** a 404 gives `expectToolError(result, { kind: 'http', status: 404 })`.
 
 ### Changed tests
 
-- `test/tools/fixtures.ts`: `fixtureServices` and `fixtureContext` add a real
-  `createCatalog(client)` on the same fake `fetch`.
+- `test/support/harness.ts`: the services `createTestServer` builds gain a real
+  `createCatalog(client)`, as `cli.ts`'s do.
+- `test/tools/fixtures.ts`: `fixtureServices` and `fixtureContext` gain it too, on the same fake
+  API.
 - `test/cli.test.ts`: one catalog however many servers the factory builds, checked with a spy the
   way the one-client test does it.
 - `test/tools/catalog.test.ts`: `toolProblems(ALL_TOOLS)` now checks six real tools. If #7 has not
@@ -515,7 +520,7 @@ real `createFakeApi` is used instead.
 
 ### Fixtures
 
-`test/fixtures/catalog.ts` follows #6's pattern: constants built from the documented response
+`test/fixtures/catalog.ts` follows the pattern in `CONTRIBUTING.md`: constants built from the documented response
 examples, trimmed to a few items, and builders that take overrides. It holds a blueprint, the
 blueprint list, a blueprint's providers, the provider list, a provider with its blueprints,
 variants in two colors and several sizes (including one that only the out-of-stock list has), and a
@@ -524,10 +529,10 @@ number of blueprints for the truncation test.
 
 ## Acceptance criteria mapping
 
-| Criterion (issue #8)                                 | Covered by                                                                                      |
-| ---------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| Tests per tool, including filters and cache hits     | `test/tools/catalog-toolset.test.ts`, through `runTool` (decision 5)                            |
-| Outputs stay compact: no `images[]` unless requested | `include_images` on `get_blueprint`, image-free provider blueprints, the no-`images` assertions |
+| Criterion (issue #8)                                     | Covered by                                                                                      |
+| -------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| Harness tests per tool, including filters and cache hits | `test/tools/catalog-toolset.test.ts`, through `createTestServer`                                |
+| Outputs stay compact: no `images[]` unless requested     | `include_images` on `get_blueprint`, image-free provider blueprints, the no-`images` assertions |
 
 The issue's other requirements:
 
@@ -551,26 +556,26 @@ The issue's other requirements:
 | `get_print_areas` over `variants()`                      | #18                                                             |
 | Shipping methods and per-method costs (v2)               | #9, as two more `Catalog` methods                               |
 | Sharing one in-flight request between concurrent callers | #17, if cold full-list downloads in parallel turn out to matter |
-| Moving the toolset tests onto `createTestServer`         | #6, or whichever issue lands after it                           |
 | Stripping HTML from `description`                        | Not planned                                                     |
 | Filters on a third option, a country filter on shipping  | Not planned                                                     |
 | Renaming `test/tools/catalog.test.ts`                    | Not planned while #7 edits it                                   |
 
 ## Delivery
 
-1. Branch `feat/8-catalog-toolset` from `origin/main` (57869ad), in its own worktree at
-   `../printify-mcp-worktrees/feat-8-catalog-toolset`, outside the repository so the main
-   checkout's `eslint .` does not lint it. This spec is its first commit.
-2. Implementation plan via the writing-plans skill. Before implementing, check whether #6 and #7
-   have merged; rebase onto `main` if they have, and apply decisions 5 and 6 accordingly.
+1. Branch `feat/8-catalog-toolset` from `origin/main` (c40ffca, which carries #6's harness), in its
+   own worktree at `../printify-mcp-worktrees/feat-8-catalog-toolset`, outside the repository so
+   the main checkout's `eslint .` does not lint it. This spec is its first commit.
+2. Implementation plan via the writing-plans skill. Before implementing, check whether #7 has
+   merged; rebase onto `main` if it has, and apply decision 5 accordingly.
 3. Test-first implementation.
 4. Local verification before any claim of success: `npm ci`, `npm run lint`, `npm run typecheck`,
    `npm test` and `npm run build`.
 5. PR starting with `Closes #8`, moved to In review on the project board. Watch its CI run on
    Node 22 and 24.
 6. Hand-off comments:
-   - #6: the catalog toolset tests are ready to move onto `createTestServer`; the stand-in fake API
-     follows its rules; the catalog fixtures are in `test/fixtures/catalog.ts`.
+   - #7, if #8 lands first: `TOOLS_BY_TOOLSET` already exists with `catalog: catalogTools`, and the
+     services in `cli.ts`, `test/support/harness.ts` and `test/tools/fixtures.ts` already carry
+     `catalog`, next to which `shops` goes.
    - #9: add `shippingMethods` and `shippingCosts` to `Catalog` with a 1 h TTL; the `catalog` rate
      bucket already covers `/v2/catalog/`.
    - #17: use `catalog.allBlueprints()` (24 h, no in-flight sharing), and add a `search_blueprints`
