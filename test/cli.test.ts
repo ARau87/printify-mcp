@@ -1,11 +1,11 @@
 import { tmpdir } from 'node:os';
-import { Client } from '@modelcontextprotocol/client';
-import { InMemoryTransport, McpServer } from '@modelcontextprotocol/server';
+import { McpServer } from '@modelcontextprotocol/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { main, type CliIo } from '../src/cli.js';
 import { PACKAGE_VERSION } from '../src/package-info.js';
 import { createPrintifyClient } from '../src/printify/client.js';
 import type { Tool } from '../src/tools/define.js';
+import { connectClient } from './support/harness.js';
 import { FIXTURE_TOOLS } from './tools/fixtures.js';
 
 // ALL_TOOLS is empty until the first toolset lands. The tests below fill this stand-in.
@@ -36,15 +36,6 @@ const TOOLSETS = [
   'webhooks',
   'workflows',
 ];
-
-/** Connects a real MCP client to `server` over an in-memory transport. */
-async function connectClient(server: McpServer): Promise<Client> {
-  const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
-  const mcp = new Client({ name: 'printify-mcp-test', version: '0' });
-  await server.connect(serverSide);
-  await mcp.connect(clientSide);
-  return mcp;
-}
 
 function fakeIo() {
   const output = { stdout: '', stderr: '' };

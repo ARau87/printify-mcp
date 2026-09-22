@@ -1,5 +1,9 @@
 import { Client } from '@modelcontextprotocol/client';
-import { InMemoryTransport, type CallToolResult } from '@modelcontextprotocol/server';
+import {
+  InMemoryTransport,
+  type CallToolResult,
+  type McpServer,
+} from '@modelcontextprotocol/server';
 import { onTestFinished } from 'vitest';
 import { loadConfig, type Config, type Env } from '../../src/config.js';
 import { createLogger } from '../../src/log.js';
@@ -12,6 +16,15 @@ import { createFakeApi, type FakeApi, type Routes } from './fake-api.js';
 
 /** The token every harness server runs with. Never a real one. */
 export const TEST_TOKEN = 'Tok-harness-9K8j7H6g';
+
+/** Connects a real MCP client to `server` over an in-memory transport. */
+export async function connectClient(server: McpServer): Promise<Client> {
+  const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
+  const mcp = new Client({ name: 'printify-mcp-test', version: '0' });
+  await server.connect(serverSide);
+  await mcp.connect(clientSide);
+  return mcp;
+}
 
 export interface TestServerOptions {
   /** Defaults to `ALL_TOOLS`. */
@@ -72,10 +85,7 @@ export async function createTestServer(options: TestServerOptions = {}): Promise
     instructions: serverInstructions(selection.skipped),
   });
 
-  const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
-  const mcp = new Client({ name: 'printify-mcp-test', version: '0' });
-  await server.connect(serverSide);
-  await mcp.connect(clientSide);
+  const mcp = await connectClient(server);
 
   let closed = false;
   const close = async (): Promise<void> => {
