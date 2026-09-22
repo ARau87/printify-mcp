@@ -2,7 +2,7 @@
 
 - **Issue:** [#7 Shops toolset and default shop resolution](https://github.com/ARau87/printify-mcp/issues/7)
 - **Date:** 2026-09-22
-- **Status:** approved
+- **Status:** approved; tests moved onto #6's harness after #6 merged (same day)
 
 ## Goal
 
@@ -40,12 +40,18 @@ Checked on 2026-09-22 against the HTML docs at https://developers.printify.com/#
    will hit.
 4. **`ALL_TOOLS` is derived from a record keyed by toolset.** It was a flat array literal that
    every toolset issue appended to (the #5 follow-up). See [Composing `ALL_TOOLS`](#composing-all_tools).
-5. **Tests use the helpers already in the repo.** The acceptance criteria ask for harness tests,
-   but #6's harness has not landed. Tool tests run through `runTool` and `test/tools/fixtures.ts`,
-   and the end-to-end tests through `createServer` and `test/support/json-rpc.ts`, as #5's hand-off
-   comment on this issue planned. #6 moves the end-to-end tests to `createTestServer`.
+5. **Resolution is tested through the harness with a fixture tool.** `resolveShopId` is not a tool,
+   so `test/tools/fixtures.ts` gains `getShopId`: a shop-scoped tool named `get_shop_id` that
+   returns the id `resolveShopId` gives it. The resolution tests call it through
+   `createTestServer`, with `PRINTIFY_SHOP_ID` set through `env` and the real `loadConfig`, as the
+   acceptance criteria ask.
 6. **No shared id schemas besides `shop_id`.** #5's out-of-scope table put `shopId` and
    `productId` here. `productId` and the other ids move to the first toolset that uses them.
+7. **#7 writes the "Adding a tool" section of `CONTRIBUTING.md`.** #6's spec left it to #7, the
+   first toolset. It documents the conventions this issue sets.
+8. **The tool exports are named `listShopsTool` and `disconnectShopTool`.** #6's worked example in
+   `CONTRIBUTING.md` already imports `listShopsTool` from `src/tools/shops.ts`. The suffix also
+   keeps them apart from `test/tools/fixtures.ts`'s fixture tool `listShops`.
 
 ## Files
 
@@ -55,18 +61,21 @@ src/printify/
   errors.ts         # invalidResponseError gains the problem 'an unexpected shop list'
 src/tools/
   shop-id.ts        # new: shopIdInput, resolveShopId
-  shops.ts          # new: listShops, disconnectShop, shopsTools
+  shops.ts          # new: listShopsTool, disconnectShopTool, shopsTools
   index.ts          # TOOLS_BY_TOOLSET; ALL_TOOLS derived from it
   define.ts         # ToolServices gains shops
 src/cli.ts          # creates the shop directory once per process
+test/support/
+  harness.ts        # createTestServer's services gain shops
 test/printify/
   shops.test.ts     # new: the directory and its cache
 test/tools/
-  shop-id.test.ts   # new: the resolution branches
-  shops.test.ts     # new: both tools, gating, end to end
+  shop-id.test.ts   # new: the resolution branches, through the harness
+  shops.test.ts     # new: both tools, gating, through the harness
   catalog.test.ts   # every tool sits under its own toolset's key
-  fixtures.ts       # services gain shops; an optional config override
+  fixtures.ts       # services gain shops; the getShopId fixture tool
 test/cli.test.ts    # one shop directory per process
+CONTRIBUTING.md     # new section: Adding a tool
 ```
 
 No new dependencies.
@@ -78,11 +87,8 @@ validate, cache. It knows nothing about tools. `src/tools/shop-id.ts` is tool-le
 ## Shop directory
 
 ```ts
-export interface Shop {
-  id: number;
-  title: string | undefined;
-  sales_channel: string | undefined;
-}
+/** `{ id: number; title?: string | undefined; sales_channel?: string | undefined }` */
+export type Shop = z.output<typeof shopSchema>;
 
 export interface ShopDirectory {
   /** The account's shops: fetched on first use, then cached until `invalidate`. */
@@ -103,16 +109,15 @@ every server instance of the process shares one cache, as they share one rate li
 const services: ToolServices = { client, config, log, shops: createShopDirectory(client) };
 ```
 
-**Response schema.** `z.array(z.object({ … }))`, so unknown keys are stripped:
+**Response schema.** A `z.object` per shop, so unknown keys are stripped:
 
 ```ts
-const shopListSchema = z.array(
-  z.object({
-    id: z.number().int(),
-    title: z.string().optional().catch(undefined),
-    sales_channel: z.string().optional().catch(undefined),
-  }),
-);
+const shopSchema = z.object({
+  id: z.number().int(),
+  title: z.string().optional().catch(undefined),
+  sales_channel: z.string().optional().catch(undefined),
+});
+const shopListSchema = z.array(shopSchema);
 ```
 
 `title` and `sales_channel` are lenient, so one odd shop cannot break resolution for all of them.
@@ -132,9 +137,13 @@ as kind `invalid_response`.
 ```ts
 async function fetchShops(signal: AbortSignal): Promise<readonly Shop[]> {
   const started = generation;
-  const shops = parseShops(await client.request('GET', SHOPS_PATH, { signal }));
-  if (generation === started) cached = shops;
-  return shops;
+  const body = await client.request('GET', SHOPS_PATH, { signal });
+  const parsed = shopListSchema.safeParse(body);
+  if (!parsed.success) {
+    throw invalidResponseError({ method: 'GET', path: SHOPS_PATH }, 200, 'an unexpected shop list');
+  }
+  if (generation === started) cached = parsed.data;
+  return parsed.data;
 }
 ```
 
@@ -196,7 +205,7 @@ and a wrong id already comes back as Printify's 404 with the "check the id" hint
 
 ## Tools
 
-`src/tools/shops.ts` exports both tools and `shopsTools = [listShops, disconnectShop]`.
+`src/tools/shops.ts` exports both tools and `shopsTools = [listShopsTool, disconnectShopTool]`.
 
 ### `list_shops`
 
@@ -285,9 +294,9 @@ export const ALL_TOOLS: readonly Tool[] = TOOLSETS.flatMap((toolset) => TOOLS_BY
 - A catalog test checks that every tool under a key has that `toolset`.
 
 Neither this nor a flat spread catches "defined the tool but never wired it in": an unused export
-is not an error. The guard is a test convention. Each toolset's gating and end-to-end tests select
-from `ALL_TOOLS`, not from the toolset's own array, so a tool that is not wired in fails its own
-tests.
+is not an error. The guard is a test convention. Each toolset's tests call `createTestServer`
+with its default tools, which are `ALL_TOOLS`, so a tool that is not wired in fails its own tests.
+A test that needs a fixture tool as well passes `tools: [...ALL_TOOLS, getShopId]`.
 
 ## Error handling
 
@@ -299,9 +308,10 @@ tests.
 
 ## Tests
 
-Test-first. Every test passes a `vi.fn` fake `fetch` and asserts "no request" with
-`expect(fetch).not.toHaveBeenCalled()`, rather than relying on `unexpectedFetch`, whose failure
-reads "could not reach Printify" until #6 fixes it.
+Test-first. The directory has plain unit tests against a fake `PrintifyClient`. Everything that
+goes through a tool uses #6's harness: `createTestServer` with the fake Printify API, the shop
+fixtures in `test/fixtures/shops.ts` (`SHOP`, `DISCONNECTED_SHOP`, `SHOPS`), and `expectToolData`
+and `expectToolError`. "No request" is asserted as `expect(api.requests).toEqual([])`.
 
 **`test/printify/shops.test.ts`: the directory.**
 
@@ -313,74 +323,73 @@ reads "could not reach Printify" until #6 fixes it.
 - A body that is not an array, or a shop without an integer `id`, is an `invalid_response` error.
 - An odd `title` or `sales_channel` becomes `undefined` without dropping the shop.
 
-**`test/tools/shop-id.test.ts`: `resolveShopId`.**
+**`test/tools/shop-id.test.ts`: `resolveShopId`, through `get_shop_id`.**
 
 - An explicit `shop_id` wins over `PRINTIFY_SHOP_ID`, with no request.
 - `PRINTIFY_SHOP_ID` is used, with no request.
 - The only shop costs one request; a second call uses the cache.
-- No shops: the `ToolError` and its hint.
+- No shops: the `ToolError` (kind `tool`) and its hint.
 - Several shops: the `ToolError` listing them, with titles JSON-quoted and a missing title or
   sales channel left out.
-- An aborted signal rejects with its reason.
+- A cancelled call aborts the shop list request, and the next call fetches again.
+- A `shop_id` that is zero, a string or a fraction is a validation error, with no request.
 
-**`test/tools/shops.test.ts`: both tools, gating, end to end.**
+**`test/tools/shops.test.ts`: both tools, through `ALL_TOOLS`.**
 
-- `list_shops` through `runTool`: the request, the output, the three `default_shop_id` cases
-  (configured, only shop, none), and that it refreshes the cache.
-- `disconnect_shop` through `runTool`: it sends **DELETE** (not GET) to
-  `/v1/shops/{shop_id}/connection.json`, returns `{ shop_id, disconnected: true }`, and
-  invalidates the cache after both success and a 404.
-- Gating through `selectTools(ALL_TOOLS, …)`: `disconnect_shop` is skipped with reason
-  `destructive` when the flag is off and enabled when it is on; `list_shops` is always enabled.
-- End to end through `createServer` and `test/support/json-rpc.ts`:
-  - `tools/list` shows both tools with their annotations when the flag is on.
-  - `list_shops` returns structured content.
-  - `disconnect_shop` without `shop_id` is an input validation error, and no request is sent.
+- `list_shops`: the request, the output, the three `default_shop_id` cases (configured, only
+  shop, none), and that it refreshes the cache that `get_shop_id` then uses.
+- `disconnect_shop`:
+  - Without `PRINTIFY_ENABLE_DESTRUCTIVE` it is not listed, `selection.skipped` gives the reason
+    `destructive`, and the instructions tell the model how to turn it on.
+  - With the flag it is listed after the read-only `list_shops`, destructive, with `shop_id`
+    required.
+  - It sends **DELETE** (not GET) to `/v1/shops/{shop_id}/connection.json`, and nothing else, and
+    returns `{ shop_id, disconnected: true }`.
+  - Without `shop_id` it is a validation error even when `PRINTIFY_SHOP_ID` is set, with no
+    request.
+  - It drops the shop cache after both success and a 404.
 
 **Changed tests.**
 
 - `test/tools/catalog.test.ts`: the rule check now runs over real tools. New: every tool in
   `TOOLS_BY_TOOLSET[key]` has `toolset === key`.
-- `test/tools/fixtures.ts`: `fixtureServices` and `fixtureContext` add a real
-  `createShopDirectory(client)` on the fake `fetch`, and take an optional config override (e.g.
-  `{ shopId: 12 }`) for the `PRINTIFY_SHOP_ID` branch.
+- `test/tools/fixtures.ts`: `fixtureServices` adds `createShopDirectory(client)`, and the file
+  gains the `getShopId` fixture tool.
+- `test/support/harness.ts`: `createTestServer`'s services add `createShopDirectory(client)`, as
+  `cli.ts` does.
 - `test/cli.test.ts`: one shop directory however many servers the factory builds, checked with a
   spy the way the one-client test does it. The comment that says `ALL_TOOLS` is empty goes.
 
 ## Acceptance criteria mapping
 
-| Criterion or requirement                                                  | Where                                                                                 |
-| ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
-| Tests for all four resolution branches                                    | `test/tools/shop-id.test.ts`, with the repo's helpers (decision 5)                    |
-| Tests for both tools                                                      | `test/tools/shops.test.ts`                                                            |
-| `disconnect_shop` only registered with `PRINTIFY_ENABLE_DESTRUCTIVE=true` | gate `destructive`; gating tests through `selectTools(ALL_TOOLS, …)` and `tools/list` |
-| Disconnect uses DELETE, not Postman's GET                                 | `disconnect_shop`; asserted on the request method                                     |
-| Shop list cached for the process lifetime                                 | `ShopDirectory`, created once in `cli.ts`                                             |
-| Cache invalidated after `disconnect_shop`                                 | `invalidate()` in a `finally`; tested after success and failure                       |
-| Example: "Which Printify shops do I have?"                                | `list_shops` returns id, title, sales channel and `default_shop_id`                   |
+| Criterion or requirement                                                  | Where                                                                               |
+| ------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| Harness tests for all four resolution branches                            | `test/tools/shop-id.test.ts`, through `get_shop_id` (decision 5)                    |
+| Harness tests for both tools                                              | `test/tools/shops.test.ts`                                                          |
+| `disconnect_shop` only registered with `PRINTIFY_ENABLE_DESTRUCTIVE=true` | gate `destructive`; `tools/list`, `selection` and instructions, through `ALL_TOOLS` |
+| Disconnect uses DELETE, not Postman's GET                                 | `disconnect_shop`; asserted on the request method                                   |
+| Shop list cached for the process lifetime                                 | `ShopDirectory`, created once in `cli.ts`                                           |
+| Cache invalidated after `disconnect_shop`                                 | `invalidate()` in a `finally`; tested after success and failure                     |
+| Example: "Which Printify shops do I have?"                                | `list_shops` returns id, title, sales channel and `default_shop_id`                 |
 
 ## Out of scope
 
-| Topic                                                      | Where                                           |
-| ---------------------------------------------------------- | ----------------------------------------------- |
-| Checking `PRINTIFY_SHOP_ID` against the shop list          | Not planned: it would cost a request at startup |
-| A TTL or other automatic refresh of the shop cache         | Not planned: `list_shops` refreshes it          |
-| Id schemas other than `shop_id` (`productId`, …)           | The first toolset that uses each                |
-| `createTestServer`, the fake API routes, `CONTRIBUTING.md` | #6                                              |
-| Making `unexpectedFetch`'s failure readable                | #6                                              |
-| Rendering the tool reference                               | #21                                             |
+| Topic                                              | Where                                           |
+| -------------------------------------------------- | ----------------------------------------------- |
+| Checking `PRINTIFY_SHOP_ID` against the shop list  | Not planned: it would cost a request at startup |
+| A TTL or other automatic refresh of the shop cache | Not planned: `list_shops` refreshes it          |
+| Id schemas other than `shop_id` (`productId`, …)   | The first toolset that uses each                |
+| Rendering the tool reference                       | #21                                             |
 
 ## Delivery
 
-1. Branch `feat/7-shops` from `origin/main`. This spec is its first commit.
-2. Implementation plan via the writing-plans skill, then test-first implementation.
+1. Branch `feat/7-shops` from `origin/main`, rebased onto it after #6 merged. This spec is its
+   first commit.
+2. Implementation plan via the writing-plans skill, then test-first implementation, in a worktree
+   of its own.
 3. Local verification before any claim of success: `npm ci`, `npm run lint`, `npm run typecheck`,
    `npm test` and `npm run build`.
 4. PR starting with `Closes #7`, moved to In review on the project board. Watch its CI run on
    Node 22 and 24.
-5. Hand-off comments:
-   - #6: the fixtures now carry `shops` and a config override; #7's end-to-end tests should move
-     to `createTestServer`; the "adding a tool" section of `CONTRIBUTING.md` should cover the
-     per-toolset file, the `TOOLS_BY_TOOLSET` line, `shopIdInput` with `resolveShopId`, and testing
-     through `ALL_TOOLS`.
-   - #8, noting that it applies to #8–#19: the same conventions, briefly.
+5. A hand-off comment on #8, noting that it applies to #8–#19: the conventions from "Adding a
+   tool", briefly, with a pointer to that section.
