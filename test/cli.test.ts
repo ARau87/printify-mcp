@@ -1,11 +1,11 @@
 import { tmpdir } from 'node:os';
-import { McpServer } from '@modelcontextprotocol/server';
+import { Client } from '@modelcontextprotocol/client';
+import { InMemoryTransport, McpServer } from '@modelcontextprotocol/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { main, type CliIo } from '../src/cli.js';
 import { PACKAGE_VERSION } from '../src/package-info.js';
 import { createPrintifyClient } from '../src/printify/client.js';
 import type { Tool } from '../src/tools/define.js';
-import { connect } from './support/json-rpc.js';
 import { FIXTURE_TOOLS } from './tools/fixtures.js';
 
 // ALL_TOOLS is empty until the first toolset lands. The tests below fill this stand-in.
@@ -36,6 +36,15 @@ const TOOLSETS = [
   'webhooks',
   'workflows',
 ];
+
+/** Connects a real MCP client to `server` over an in-memory transport. */
+async function connectClient(server: McpServer): Promise<Client> {
+  const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
+  const mcp = new Client({ name: 'printify-mcp-test', version: '0' });
+  await server.connect(serverSide);
+  await mcp.connect(clientSide);
+  return mcp;
+}
 
 function fakeIo() {
   const output = { stdout: '', stderr: '' };
@@ -241,9 +250,9 @@ describe('main', () => {
       const call = served[0];
       if (call === undefined) throw new Error('serve was not called');
       const [factory] = call;
-      const mcp = await connect(factory());
-      expect((await mcp.listTools()).map((tool) => tool.name)).toEqual(['list_shops']);
-      expect(mcp.initialized.instructions).toContain('(create_order)');
+      const mcp = await connectClient(factory());
+      expect((await mcp.listTools()).tools.map((tool) => tool.name)).toEqual(['list_shops']);
+      expect(mcp.getInstructions()).toContain('(create_order)');
       await mcp.close();
     });
   });
