@@ -79,6 +79,7 @@ It returns:
 | `api`       | The fake Printify API — the recorded requests and `expectRequest`.       |
 | `logged`    | The lines the server wrote to stderr.                                    |
 | `selection` | What `selectTools` enabled and skipped.                                  |
+| `close`     | Closes the client and server. Called automatically on test finish.       |
 
 Use `env` rather than `config` where you can, because it goes through the real parser:
 
@@ -116,7 +117,7 @@ Computed keys work, so ids can come from a constant:
 routes: { [`GET /v1/shops/${SHOP.id}/products.json`]: PRODUCTS }
 ```
 
-The other response helpers are `text(body, status)` for a body that is not JSON, `fails(error)`
+The other response helpers are `text(body, status)` for a body that is not JSON, `fails(cause)`
 for a network failure, and `never()` for a server that answers only when the request is cancelled.
 
 **A request that matches no route** is answered with `418` and a body naming the missing route and
@@ -140,8 +141,8 @@ expectToolError(result, { kind: 'validation' }); // the SDK's input validation e
 ```
 
 `expectToolError` normalises both shapes: the registry's `structuredContent.error` (with `kind`,
-`status`, `code`, `message`, `reason`, `request_id`, `hint`), and the SDK's text-only
-`Input validation error: …`, which becomes `kind: 'validation'`.
+`request`, `status`, `code`, `message`, `reason`, `request_id`, `retry_after_seconds`, `hint`),
+and the SDK's text-only `Input validation error: …`, which becomes `kind: 'validation'`.
 
 ## Fixtures
 
