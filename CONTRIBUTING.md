@@ -59,7 +59,9 @@ describe('list_shops', () => {
 ```
 
 There is no cleanup to write. The harness closes the client and the server when the test
-finishes, and fails the test if any request matched no route.
+finishes, and fails the test if any request matched no route. That teardown hooks itself to the
+running test, so call `createTestServer` inside the `it`, not in `beforeAll`, and don't combine it
+with `.concurrent`.
 
 ### `createTestServer(options)`
 
@@ -72,14 +74,14 @@ finishes, and fails the test if any request matched no route.
 
 It returns:
 
-| Property    | Meaning                                                                  |
-| ----------- | ------------------------------------------------------------------------ |
-| `mcp`       | The real MCP `Client`: `listTools()`, `getInstructions()`, `callTool()`. |
-| `call`      | Shorthand: `call('list_shops', { page: 2 })`.                            |
-| `api`       | The fake Printify API — the recorded requests and `expectRequest`.       |
-| `logged`    | The lines the server wrote to stderr.                                    |
-| `selection` | What `selectTools` enabled and skipped.                                  |
-| `close`     | Closes the client and server. Called automatically on test finish.       |
+| Property    | Meaning                                                                                   |
+| ----------- | ----------------------------------------------------------------------------------------- |
+| `mcp`       | The real MCP `Client`: `listTools()`, `getInstructions()`, `callTool()`.                  |
+| `call`      | Shorthand: `call('list_shops', { page: 2 })`.                                             |
+| `api`       | The fake Printify API — the recorded requests and `expectRequest`.                        |
+| `logged`    | The lines the tools and the registry logged during a call (not `cli.ts`'s startup lines). |
+| `selection` | What `selectTools` enabled and skipped.                                                   |
+| `close`     | Closes the client and server. Called automatically on test finish.                        |
 
 Use `env` rather than `config` where you can, because it goes through the real parser:
 
@@ -120,6 +122,21 @@ routes: { [`GET /v1/shops/${SHOP.id}/products.json`]: PRODUCTS }
 The other response helpers are `text(body, status)` for a body that is not JSON, `fails(cause)`
 for a network failure, and `never()` for a server that answers only when the request is cancelled.
 
+**Retries wait on real timers.** `src/printify/client.ts` awaits `sleep(...)` between attempts, so
+a route that makes the client retry costs real wall-clock time: roughly 500–1000 ms for one 429
+retry like the `orders.json` example above, and roughly 1.5–3 s across all attempts for `fails()`
+on an idempotent method (GET, PUT, DELETE), which retries on every attempt. Thirteen tests copying
+that pattern add up. To make a 429 retry immediate, send `retry-after: 0`:
+
+```ts
+'POST /v1/shops/12/orders.json': inTurn(json({}, 429, { 'retry-after': '0' }), json(ORDER, 201)),
+```
+
+`parseRetryAfter` in `src/printify/retry.ts` reads `'0'` as 0 ms, so the client retries at once
+instead of backing off. `vi.useFakeTimers()` is the alternative when a retry-after header cannot
+avoid the wait, but reach for it only then: the client's 30 s `AbortSignal.timeout` and the MCP
+client's own request timeout both interact badly with fake timers.
+
 **A request that matches no route** is answered with `418` and a body naming the missing route and
 listing the ones you declared, so the tool result says exactly what was missing. The test also
 fails at the end if any request went unmatched. When a test provokes a miss on purpose, consume it
@@ -128,7 +145,9 @@ with `api.takeUnmatched()`.
 ### Asserting
 
 ```ts
-// Exactly one matching request; returns it, so you can assert further.
+// Exactly one matching request; returns it, so you can assert further. The body is matched
+// partially (toMatchObject): extra keys pass. For an exact check, assert on request.body with
+// toEqual instead.
 const request = api.expectRequest('POST', '/v1/shops/12/orders.json', { external_id: 'abc' });
 expect(request.query).toEqual({ limit: '10' });
 
