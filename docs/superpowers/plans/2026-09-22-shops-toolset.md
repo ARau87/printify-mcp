@@ -1,5 +1,11 @@
 # Shops Toolset Implementation Plan
 
+> **On hold until #6 merges (decided 2026-09-22).** Do not execute this version. Once #6's test
+> harness is on `main`, rebase `feat/7-shops` and revise the plan and spec. Move the tests onto
+> `createTestServer` and `test/fixtures/shops.ts`. Drop `json`, `jsonFetch`, the fixture config
+> overrides and the `test/server.test.ts` change. Give `createTestServer`'s services `shops`, and
+> add the "Adding a tool" section to `CONTRIBUTING.md`. The `src/` code stays as planned.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Shop-scoped tools get their shop id without a lookup call: from `shop_id`, else
