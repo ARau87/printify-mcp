@@ -294,7 +294,8 @@ model sees as kind `invalid_response`. The whole call fails; items are never dro
 ## Tools
 
 `src/tools/catalog.ts` exports the six tools and
-`catalogTools = [getBlueprint, listBlueprintProviders, listVariants, getShippingInfo, listPrintProviders, getPrintProvider]`.
+`catalogTools = [getBlueprintTool, listBlueprintProvidersTool, listVariantsTool, getShippingInfoTool, listPrintProvidersTool, getPrintProviderTool]`.
+The `…Tool` suffix is #7's convention, taken from the `CONTRIBUTING.md` example.
 
 All six are in the `catalog` toolset with no gate, and all have the annotations
 `{ readOnlyHint: true, destructiveHint: false, idempotentHint: true }`. Every input is a
