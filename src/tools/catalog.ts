@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { Location } from '../printify/catalog.js';
+import type { Location, Variant, VariantList } from '../printify/catalog.js';
 import { defineTool, type Tool, type ToolAnnotations } from './define.js';
 import { omitKeys } from './shape.js';
 
@@ -17,6 +17,23 @@ const blueprintId = z
   .int()
   .positive()
   .describe('The catalog blueprint id, e.g. from get_print_provider.');
+
+const printProviderId = z
+  .number()
+  .int()
+  .positive()
+  .describe('The print provider id, e.g. from list_blueprint_providers.');
+
+const optionFilter = (option: string) =>
+  z
+    .array(z.string().min(1))
+    .min(1)
+    .max(50)
+    .optional()
+    .describe(
+      `Only variants whose ${option} is one of these. Exact names, ignoring case and surrounding ` +
+        `spaces; option_values lists every name.`,
+    );
 
 export const getBlueprintTool = defineTool({
   name: 'get_blueprint',
@@ -65,6 +82,62 @@ export const listBlueprintProvidersTool = defineTool({
   },
 });
 
+export const listVariantsTool = defineTool({
+  name: 'list_variants',
+  toolset: 'catalog',
+  description:
+    'Lists the variants (the size and color combinations) a print provider offers for a ' +
+    'blueprint. Each has the variant id that products and orders use, its options, and its ' +
+    'print positions with their size in pixels. Filter with colors and sizes: exact names, ' +
+    'ignoring case, and option_values lists every name. Only variants in stock are listed ' +
+    'unless show_out_of_stock is set; then every variant says whether it is in_stock.',
+  annotations: READ_ONLY,
+  input: z.strictObject({
+    blueprint_id: blueprintId,
+    print_provider_id: printProviderId,
+    colors: optionFilter('color'),
+    sizes: optionFilter('size'),
+    show_out_of_stock: z
+      .boolean()
+      .default(false)
+      .describe('Also list the variants that are out of stock, marked in_stock: false.'),
+  }),
+  handler: async (input, ctx) => {
+    const { blueprint_id: blueprint, print_provider_id: provider } = input;
+    let list: VariantList;
+    let inStockIds: Set<number> | undefined;
+    if (input.show_out_of_stock) {
+      const [all, inStock] = await Promise.all([
+        ctx.catalog.variants(blueprint, provider, { showOutOfStock: true }, ctx.signal),
+        ctx.catalog.variants(blueprint, provider, { showOutOfStock: false }, ctx.signal),
+      ]);
+      list = all;
+      inStockIds = new Set(inStock.variants.map((variant) => variant.id));
+    } else {
+      list = await ctx.catalog.variants(blueprint, provider, { showOutOfStock: false }, ctx.signal);
+    }
+
+    const matched = list.variants.filter(
+      (variant) =>
+        matchesOption(variant, 'color', input.colors) &&
+        matchesOption(variant, 'size', input.sizes),
+    );
+    return {
+      print_provider: { id: list.id, title: list.title },
+      total_variants: list.variants.length,
+      variant_count: matched.length,
+      option_values: optionValues(list.variants),
+      variants: matched.map((variant) => ({
+        id: variant.id,
+        title: variant.title,
+        options: variant.options,
+        placeholders: variant.placeholders,
+        in_stock: inStockIds === undefined ? undefined : inStockIds.has(variant.id),
+      })),
+    };
+  },
+});
+
 export const listPrintProvidersTool = defineTool({
   name: 'list_print_providers',
   toolset: 'catalog',
@@ -89,6 +162,7 @@ export const listPrintProvidersTool = defineTool({
 export const catalogTools: readonly Tool[] = [
   getBlueprintTool,
   listBlueprintProvidersTool,
+  listVariantsTool,
   listPrintProvidersTool,
 ];
 
@@ -96,4 +170,29 @@ export const catalogTools: readonly Tool[] = [
 function shortLocation(location: Location | undefined) {
   if (location === undefined) return undefined;
   return { city: location.city, region: location.region, country: location.country };
+}
+
+/** True when no filter is set, or one of its values is the variant's option, ignoring case. */
+function matchesOption(
+  variant: Variant,
+  option: string,
+  wanted: readonly string[] | undefined,
+): boolean {
+  if (wanted === undefined) return true;
+  const value = variant.options[option];
+  if (value === undefined) return false;
+  const normalised = value.trim().toLowerCase();
+  return wanted.some((name) => name.trim().toLowerCase() === normalised);
+}
+
+/** Each option's distinct values, in the order Printify sends them. */
+function optionValues(variants: readonly Variant[]): Record<string, string[]> {
+  const values: Record<string, string[]> = {};
+  for (const variant of variants) {
+    for (const [option, value] of Object.entries(variant.options)) {
+      const seen = (values[option] ??= []);
+      if (!seen.includes(value)) seen.push(value);
+    }
+  }
+  return values;
 }
