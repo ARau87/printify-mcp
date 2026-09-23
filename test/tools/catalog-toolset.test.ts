@@ -2,7 +2,10 @@ import { describe, expect, it } from 'vitest';
 import {
   BLUEPRINT,
   BLUEPRINT_PROVIDERS,
+  PRINT_PROVIDER,
   PRINT_PROVIDERS,
+  printProviderWith,
+  SHIPPING,
   VARIANTS,
   VARIANTS_WITH_OUT_OF_STOCK,
 } from '../fixtures/catalog.js';
@@ -10,11 +13,14 @@ import { notFoundBody } from '../fixtures/errors.js';
 import { expectToolData, expectToolError } from '../support/expect.js';
 import { json, type Routes } from '../support/fake-api.js';
 import { createTestServer } from '../support/harness.js';
+import { PROVIDER_BLUEPRINT_LIMIT } from '../../src/tools/catalog.js';
 
 const BLUEPRINT_PATH = '/v1/catalog/blueprints/3.json';
 const BLUEPRINT_PROVIDERS_PATH = '/v1/catalog/blueprints/3/print_providers.json';
 const PROVIDERS_PATH = '/v1/catalog/print_providers.json';
+const PROVIDER_PATH = '/v1/catalog/print_providers/3.json';
 const VARIANTS_PATH = '/v1/catalog/blueprints/3/print_providers/29/variants.json';
+const SHIPPING_PATH = '/v1/catalog/blueprints/3/print_providers/29/shipping.json';
 
 /** The variants route answers by query: a route key cannot carry one. */
 const VARIANT_ROUTES: Routes = {
@@ -295,5 +301,119 @@ describe('list_variants', () => {
 
     expectToolError(result, { kind: 'validation' });
     expect(api.requests).toEqual([]);
+  });
+});
+
+describe('get_shipping_info', () => {
+  it('returns the handling time and the profiles', async () => {
+    const { call, api } = await createTestServer({
+      routes: { [`GET ${SHIPPING_PATH}`]: SHIPPING },
+    });
+
+    const result = await call('get_shipping_info', { blueprint_id: 3, print_provider_id: 29 });
+
+    expect(expectToolData(result)).toEqual(SHIPPING);
+    // The v1 shipping path includes the print provider id.
+    api.expectRequest('GET', SHIPPING_PATH);
+  });
+});
+
+describe('get_print_provider', () => {
+  it('returns the provider with its address and blueprints', async () => {
+    const { call } = await createTestServer({
+      routes: { [`GET ${PROVIDER_PATH}`]: PRINT_PROVIDER },
+    });
+
+    const result = await call('get_print_provider', { print_provider_id: 3 });
+
+    expect(expectToolData(result)).toEqual({
+      id: 3,
+      title: 'DJ',
+      location: {
+        address1: '89 Weirfield St',
+        city: 'Brooklyn',
+        region: 'NY',
+        country: 'US',
+        zip: '11221-5120',
+      },
+      blueprint_count: 2,
+      blueprints: [
+        { id: 265, title: 'Slim Iphone 8', brand: 'Case Mate', model: 'Slim Iphone 8' },
+        { id: 52, title: 'Slim Iphone 6/6s', brand: 'Case Mate', model: 'Slim Iphone 8' },
+      ],
+    });
+  });
+
+  it('truncates a long blueprint list and says so', async () => {
+    const { call } = await createTestServer({
+      routes: { [`GET ${PROVIDER_PATH}`]: printProviderWith(60) },
+    });
+
+    const result = await call('get_print_provider', { print_provider_id: 3 });
+
+    const data = expectToolData(result);
+    expect(data.blueprint_count).toBe(60);
+    expect(data.blueprints).toHaveLength(PROVIDER_BLUEPRINT_LIMIT);
+    expect(data.blueprints_truncated).toBe(true);
+  });
+
+  it('says nothing about truncation when everything fits', async () => {
+    const { call } = await createTestServer({
+      routes: { [`GET ${PROVIDER_PATH}`]: printProviderWith(PROVIDER_BLUEPRINT_LIMIT) },
+    });
+
+    const result = await call('get_print_provider', { print_provider_id: 3 });
+
+    const data = expectToolData(result);
+    expect(data.blueprints).toHaveLength(PROVIDER_BLUEPRINT_LIMIT);
+    expect(data).not.toHaveProperty('blueprints_truncated');
+  });
+});
+
+describe('the catalog toolset', () => {
+  it('offers six read-only tools', async () => {
+    const { mcp } = await createTestServer();
+
+    const { tools } = await mcp.listTools();
+
+    const catalog = tools.filter((tool) =>
+      [
+        'get_blueprint',
+        'list_blueprint_providers',
+        'list_variants',
+        'get_shipping_info',
+        'list_print_providers',
+        'get_print_provider',
+      ].includes(tool.name),
+    );
+    expect(catalog).toHaveLength(6);
+    for (const tool of catalog) {
+      expect(tool.annotations).toMatchObject({
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      });
+    }
+  });
+
+  it('never sends image arrays unless they were asked for', async () => {
+    const { call } = await createTestServer({
+      routes: {
+        [`GET ${BLUEPRINT_PATH}`]: BLUEPRINT,
+        [`GET ${PROVIDER_PATH}`]: PRINT_PROVIDER,
+        ...VARIANT_ROUTES,
+      },
+    });
+
+    const results = [
+      await call('get_blueprint', { blueprint_id: 3 }),
+      await call('get_print_provider', { print_provider_id: 3 }),
+      await call('list_variants', { blueprint_id: 3, print_provider_id: 29 }),
+    ];
+
+    for (const result of results) {
+      expect(JSON.stringify(expectToolData(result))).not.toContain('images');
+    }
   });
 });

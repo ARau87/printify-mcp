@@ -158,12 +158,58 @@ export const listPrintProvidersTool = defineTool({
   },
 });
 
+export const getShippingInfoTool = defineTool({
+  name: 'get_shipping_info',
+  toolset: 'catalog',
+  description:
+    "Gets a print provider's shipping costs and handling time for a blueprint. Each profile " +
+    'covers a set of countries and variant ids; REST_OF_THE_WORLD covers every country no ' +
+    'profile lists. Costs are in cents of currency (450 = 4.50 USD): first_item is charged for ' +
+    'the first item of this blueprint and provider in an order, additional_items for every ' +
+    'further one. The costs are not broken down by shipping method.',
+  annotations: READ_ONLY,
+  input: z.strictObject({ blueprint_id: blueprintId, print_provider_id: printProviderId }),
+  handler: async (input, ctx) => {
+    const shipping = await ctx.catalog.shipping(
+      input.blueprint_id,
+      input.print_provider_id,
+      ctx.signal,
+    );
+    return { ...shipping };
+  },
+});
+
+export const getPrintProviderTool = defineTool({
+  name: 'get_print_provider',
+  toolset: 'catalog',
+  description:
+    'Gets one print provider: its name, its address, and the blueprints it offers (id, title, ' +
+    `brand and model). Only the first ${String(PROVIDER_BLUEPRINT_LIMIT)} blueprints are ` +
+    'listed; blueprint_count gives the total.',
+  annotations: READ_ONLY,
+  input: z.strictObject({ print_provider_id: printProviderId }),
+  handler: async (input, ctx) => {
+    const provider = await ctx.catalog.printProvider(input.print_provider_id, ctx.signal);
+    const truncated = provider.blueprints.length > PROVIDER_BLUEPRINT_LIMIT;
+    return {
+      id: provider.id,
+      title: provider.title,
+      location: provider.location,
+      blueprint_count: provider.blueprints.length,
+      blueprints: provider.blueprints.slice(0, PROVIDER_BLUEPRINT_LIMIT),
+      blueprints_truncated: truncated ? true : undefined,
+    };
+  },
+});
+
 /** Every tool of the `catalog` toolset, in the order the drill-down uses them. */
 export const catalogTools: readonly Tool[] = [
   getBlueprintTool,
   listBlueprintProvidersTool,
   listVariantsTool,
+  getShippingInfoTool,
   listPrintProvidersTool,
+  getPrintProviderTool,
 ];
 
 /** Where the provider is, without the street address the model has no use for. */
