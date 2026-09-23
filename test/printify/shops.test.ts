@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { PrintifyClient } from '../../src/printify/client.js';
 import { httpError } from '../../src/printify/errors.js';
-import { createShopDirectory } from '../../src/printify/shops.js';
+import { createShopDirectory, type Shop } from '../../src/printify/shops.js';
 import { DISCONNECTED_SHOP, SHOP, SHOPS } from '../fixtures/shops.js';
 import { apiError, rejection } from './helpers.js';
 
@@ -95,5 +95,11 @@ describe('createShopDirectory', () => {
       { id: 5432, title: null, sales_channel: 7, created_at: '2026-09-22' },
     ]);
     expect(await createShopDirectory(client).list(signal)).toEqual([{ id: 5432 }]);
+  });
+
+  it('freezes the cached list, so a caller cannot mutate it', async () => {
+    const { client } = clientAnswering(SHOPS);
+    const shops = (await createShopDirectory(client).list(signal)) as Shop[];
+    expect(() => shops.push(DISCONNECTED_SHOP)).toThrow(TypeError);
   });
 });

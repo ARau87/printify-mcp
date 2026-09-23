@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { ALL_TOOLS } from '../../src/tools/index.js';
 import { DISCONNECTED_SHOP, SHOP, SHOPS } from '../fixtures/shops.js';
 import { expectToolData, expectToolError } from '../support/expect.js';
 import { inTurn, never } from '../support/fake-api.js';
@@ -12,7 +13,7 @@ const SEVERAL_SHOPS_HINT =
 describe('resolveShopId', () => {
   it('uses shop_id when it is given, over PRINTIFY_SHOP_ID, without a request', async () => {
     const { call, api } = await createTestServer({
-      tools: [getShopId],
+      tools: [...ALL_TOOLS, getShopId],
       env: { PRINTIFY_SHOP_ID: '9876' },
     });
     expect(expectToolData(await call('get_shop_id', { shop_id: 5432 }))).toEqual({ shop_id: 5432 });
@@ -21,7 +22,7 @@ describe('resolveShopId', () => {
 
   it('uses PRINTIFY_SHOP_ID without a request', async () => {
     const { call, api } = await createTestServer({
-      tools: [getShopId],
+      tools: [...ALL_TOOLS, getShopId],
       env: { PRINTIFY_SHOP_ID: '9876' },
     });
     expect(expectToolData(await call('get_shop_id'))).toEqual({ shop_id: 9876 });
@@ -30,7 +31,7 @@ describe('resolveShopId', () => {
 
   it('uses the only shop, and lists the shops only once', async () => {
     const { call, api } = await createTestServer({
-      tools: [getShopId],
+      tools: [...ALL_TOOLS, getShopId],
       routes: { 'GET /v1/shops.json': [SHOP] },
     });
     expect(expectToolData(await call('get_shop_id'))).toEqual({ shop_id: SHOP.id });
@@ -40,7 +41,7 @@ describe('resolveShopId', () => {
 
   it('refuses when the account has no shops', async () => {
     const { call } = await createTestServer({
-      tools: [getShopId],
+      tools: [...ALL_TOOLS, getShopId],
       routes: { 'GET /v1/shops.json': [] },
     });
     expectToolError(await call('get_shop_id'), {
@@ -52,7 +53,7 @@ describe('resolveShopId', () => {
 
   it('refuses and lists the shops when there are several', async () => {
     const { call } = await createTestServer({
-      tools: [getShopId],
+      tools: [...ALL_TOOLS, getShopId],
       routes: { 'GET /v1/shops.json': SHOPS },
     });
     expectToolError(await call('get_shop_id'), {
@@ -66,7 +67,7 @@ describe('resolveShopId', () => {
 
   it('quotes each title and leaves out a missing title or sales channel', async () => {
     const { call } = await createTestServer({
-      tools: [getShopId],
+      tools: [...ALL_TOOLS, getShopId],
       routes: {
         'GET /v1/shops.json': [
           { id: 1, title: 'Say "hi"\nnow', sales_channel: 'etsy' },
@@ -86,7 +87,7 @@ describe('resolveShopId', () => {
 
   it('cancels the shop list request with the call, and does not cache it', async () => {
     const { call, api } = await createTestServer({
-      tools: [getShopId],
+      tools: [...ALL_TOOLS, getShopId],
       routes: { 'GET /v1/shops.json': inTurn(never(), [DISCONNECTED_SHOP]) },
     });
     const controller = new AbortController();
@@ -104,7 +105,7 @@ describe('resolveShopId', () => {
     ['a string', '5432'],
     ['a fraction', 54.32],
   ])('rejects a shop_id that is %s before any request', async (_, shopId) => {
-    const { call, api } = await createTestServer({ tools: [getShopId] });
+    const { call, api } = await createTestServer({ tools: [...ALL_TOOLS, getShopId] });
     expectToolError(await call('get_shop_id', { shop_id: shopId }), { kind: 'validation' });
     expect(api.requests).toEqual([]);
   });

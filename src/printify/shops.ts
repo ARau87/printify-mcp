@@ -45,8 +45,9 @@ export function createShopDirectory(client: PrintifyClient): ShopDirectory {
         'an unexpected shop list',
       );
     }
-    if (generation === started) cached = parsed.data;
-    return parsed.data;
+    const shops = Object.freeze(parsed.data);
+    if (generation === started) cached = shops;
+    return shops;
   }
 
   return {

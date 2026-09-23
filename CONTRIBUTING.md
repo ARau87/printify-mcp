@@ -198,11 +198,15 @@ Use `defineTool` from `src/tools/define.ts`:
 - `gate: 'orders'` for a tool that spends money, `gate: 'destructive'` for one that cannot be
   undone (it also needs `destructiveHint: true`). A read-only tool has no gate. A gated tool is
   registered only when the user sets `PRINTIFY_ENABLE_ORDERS` or `PRINTIFY_ENABLE_DESTRUCTIVE`.
+  The client retries DELETE and other idempotent methods on 502, 503 and network errors, so a
+  destructive call that succeeded but whose response was lost can come back as a 404 on the retry
+  and reach the model as an error even though the change happened; such a tool's description
+  should tell the model to re-check state rather than assume the call did nothing.
 - `input`, a `z.strictObject`, so a misspelt argument is rejected rather than dropped.
 - `handler(input, ctx)`. Pass `{ signal: ctx.signal }` to `ctx.client.request`, and return a plain
-  object, never an array: `{ shops: [...] }`. The registry drops nulls and sends the object as
-  `structuredContent` and as JSON text. Drop heavy fields yourself; `omitKeys` in
-  `src/tools/shape.ts` helps.
+  object, never an array: `{ shops: [...] }`. The registry drops null and undefined properties and
+  sends the object as `structuredContent` and as JSON text, so an optional output field can simply
+  be left `undefined`. Drop heavy fields yourself; `omitKeys` in `src/tools/shape.ts` helps.
 
 Let a `PrintifyApiError` propagate: the registry turns it into an error result with a hint. Throw
 `new ToolError(message, hint)` for a deliberate refusal. Keep tokens out of both.

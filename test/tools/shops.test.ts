@@ -74,6 +74,9 @@ describe('disconnect_shop', () => {
     expect(shopTools).toMatchObject([
       {
         name: 'list_shops',
+        description: expect.stringContaining(
+          '`default_shop_id` is the shop that shop-scoped tools use when `shop_id` is left out',
+        ) as string,
         annotations: {
           readOnlyHint: true,
           destructiveHint: false,
@@ -83,6 +86,7 @@ describe('disconnect_shop', () => {
       },
       {
         name: 'disconnect_shop',
+        description: expect.stringContaining('This cannot be undone with this server') as string,
         inputSchema: { required: ['shop_id'], additionalProperties: false },
         annotations: {
           readOnlyHint: false,
@@ -92,6 +96,9 @@ describe('disconnect_shop', () => {
         },
       },
     ]);
+    expect(shopTools[1]?.description).toEqual(
+      expect.stringContaining('never uses the default shop'),
+    );
   });
 
   it('sends DELETE to the shop connection and reports the shop as disconnected', async () => {
