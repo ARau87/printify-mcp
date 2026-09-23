@@ -104,6 +104,21 @@ describe('list_blueprint_providers', () => {
     expect(providers[0]?.location).toEqual({ city: 'Brooklyn', region: 'NY', country: 'US' });
     expect(providers[1]).not.toHaveProperty('location');
   });
+
+  it('fails rather than answer without locations when the directory request fails', async () => {
+    // The location join is the point of this tool; swallowing a failed directory request would
+    // silently return providers with no locations instead of failing like the client expects.
+    const { call } = await createTestServer({
+      routes: {
+        [`GET ${BLUEPRINT_PROVIDERS_PATH}`]: BLUEPRINT_PROVIDERS,
+        [`GET ${PROVIDERS_PATH}`]: json(notFoundBody(), 404),
+      },
+    });
+
+    const result = await call('list_blueprint_providers', { blueprint_id: 3 });
+
+    expectToolError(result, { kind: 'http', status: 404 });
+  });
 });
 
 describe('list_print_providers', () => {
