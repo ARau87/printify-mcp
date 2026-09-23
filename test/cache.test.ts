@@ -40,16 +40,17 @@ describe('createTtlCache', () => {
 
   it('sweeps expired entries on set, so they do not evict fresh ones', () => {
     const { cache, tick } = testCache(2);
-    cache.set('old-1', 'one', 1000);
-    cache.set('old-2', 'two', 1000);
+    cache.set('keeper', 'kept', 10_000);
+    cache.set('stale', 'gone', 1_000);
     tick(1000);
 
-    // Both are expired: the sweep drops them, so neither counts towards the limit.
-    cache.set('fresh-1', 'three', 1000);
-    cache.set('fresh-2', 'four', 1000);
+    // Stale has expired but keeper has not. The sweep removes stale before checking size,
+    // so the newcomer can join without evicting keeper.
+    cache.set('newcomer', 'new', 10_000);
 
-    expect(cache.get('fresh-1')).toBe('three');
-    expect(cache.get('fresh-2')).toBe('four');
+    expect(cache.get('keeper')).toBe('kept');
+    expect(cache.get('stale')).toBeUndefined();
+    expect(cache.get('newcomer')).toBe('new');
   });
 
   it('evicts the oldest entry past maxEntries', () => {
