@@ -109,6 +109,21 @@ describe('list_blueprint_providers', () => {
     api.expectRequest('GET', PROVIDERS_PATH);
   });
 
+  it('answers a second call from the cache', async () => {
+    const { call, api } = await createTestServer({
+      routes: {
+        [`GET ${BLUEPRINT_PROVIDERS_PATH}`]: BLUEPRINT_PROVIDERS,
+        [`GET ${PROVIDERS_PATH}`]: PRINT_PROVIDERS,
+      },
+    });
+
+    await call('list_blueprint_providers', { blueprint_id: 3 });
+    await call('list_blueprint_providers', { blueprint_id: 3 });
+
+    api.expectRequest('GET', BLUEPRINT_PROVIDERS_PATH);
+    api.expectRequest('GET', PROVIDERS_PATH);
+  });
+
   it('leaves out the location of a provider the list does not have', async () => {
     const { call } = await createTestServer({
       routes: {
@@ -159,6 +174,17 @@ describe('list_print_providers', () => {
       ],
     });
   });
+
+  it('answers a second call from the cache', async () => {
+    const { call, api } = await createTestServer({
+      routes: { [`GET ${PROVIDERS_PATH}`]: PRINT_PROVIDERS },
+    });
+
+    await call('list_print_providers');
+    await call('list_print_providers');
+
+    api.expectRequest('GET', PROVIDERS_PATH);
+  });
 });
 
 describe('list_variants', () => {
@@ -203,6 +229,15 @@ describe('list_variants', () => {
       ],
     });
     expect(api.expectRequest('GET', VARIANTS_PATH).query).toEqual({});
+  });
+
+  it('answers a second call from the cache', async () => {
+    const { call, api } = await createTestServer({ routes: VARIANT_ROUTES });
+
+    await call('list_variants', { blueprint_id: 3, print_provider_id: 29 });
+    await call('list_variants', { blueprint_id: 3, print_provider_id: 29 });
+
+    api.expectRequest('GET', VARIANTS_PATH);
   });
 
   it('filters by color, ignoring case and spaces', async () => {
@@ -316,6 +351,17 @@ describe('get_shipping_info', () => {
     // The v1 shipping path includes the print provider id.
     api.expectRequest('GET', SHIPPING_PATH);
   });
+
+  it('answers a second call from the cache', async () => {
+    const { call, api } = await createTestServer({
+      routes: { [`GET ${SHIPPING_PATH}`]: SHIPPING },
+    });
+
+    await call('get_shipping_info', { blueprint_id: 3, print_provider_id: 29 });
+    await call('get_shipping_info', { blueprint_id: 3, print_provider_id: 29 });
+
+    api.expectRequest('GET', SHIPPING_PATH);
+  });
 });
 
 describe('get_print_provider', () => {
@@ -342,6 +388,17 @@ describe('get_print_provider', () => {
         { id: 52, title: 'Slim Iphone 6/6s', brand: 'Case Mate', model: 'Slim Iphone 8' },
       ],
     });
+  });
+
+  it('answers a second call from the cache', async () => {
+    const { call, api } = await createTestServer({
+      routes: { [`GET ${PROVIDER_PATH}`]: PRINT_PROVIDER },
+    });
+
+    await call('get_print_provider', { print_provider_id: 3 });
+    await call('get_print_provider', { print_provider_id: 3 });
+
+    api.expectRequest('GET', PROVIDER_PATH);
   });
 
   it('truncates a long blueprint list and says so', async () => {
