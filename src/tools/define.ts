@@ -1,6 +1,7 @@
 import type { z } from 'zod';
 import type { Config } from '../config.js';
 import type { Logger } from '../log.js';
+import type { Catalog } from '../printify/catalog.js';
 import type { PrintifyClient } from '../printify/client.js';
 import type { Toolset } from '../toolsets.js';
 
@@ -15,6 +16,8 @@ export interface ToolServices {
   client: PrintifyClient;
   config: Config;
   log: Logger;
+  /** The catalog reader and its cache, one per process. */
+  catalog: Catalog;
 }
 
 /** What a handler gets: the shared services plus the request's cancellation signal. */

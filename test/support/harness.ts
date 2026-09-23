@@ -7,6 +7,7 @@ import {
 import { onTestFinished } from 'vitest';
 import { loadConfig, type Config, type Env } from '../../src/config.js';
 import { createLogger } from '../../src/log.js';
+import { createCatalog } from '../../src/printify/catalog.js';
 import { createPrintifyClient } from '../../src/printify/client.js';
 import { createServer } from '../../src/server.js';
 import type { Tool } from '../../src/tools/define.js';
@@ -81,7 +82,7 @@ export async function createTestServer(options: TestServerOptions = {}): Promise
   const selection = selectTools(options.tools ?? ALL_TOOLS, config);
   const server = createServer({
     tools: selection.enabled,
-    services: { client, config, log },
+    services: { client, config, log, catalog: createCatalog(client) },
     instructions: serverInstructions(selection.skipped),
   });
 

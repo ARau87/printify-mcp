@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { loadConfig, type Config } from '../../src/config.js';
 import { createLogger } from '../../src/log.js';
+import { createCatalog } from '../../src/printify/catalog.js';
 import { createPrintifyClient } from '../../src/printify/client.js';
 import {
   defineTool,
@@ -96,12 +97,14 @@ export function fixtureServices(routes: Routes = {}) {
   const api = createFakeApi(routes);
   const logged: string[] = [];
   const config = fixtureConfig();
+  const client = createPrintifyClient({
+    token: config.token,
+    baseUrl: config.apiBaseUrl,
+    fetch: api.fetch,
+  });
   const services: ToolServices = {
-    client: createPrintifyClient({
-      token: config.token,
-      baseUrl: config.apiBaseUrl,
-      fetch: api.fetch,
-    }),
+    client,
+    catalog: createCatalog(client),
     config,
     log: createLogger((text) => {
       logged.push(text);
