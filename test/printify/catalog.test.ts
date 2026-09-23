@@ -18,7 +18,14 @@ import {
   VARIANTS_WITH_OUT_OF_STOCK,
 } from '../fixtures/catalog.js';
 import { notFoundBody } from '../fixtures/errors.js';
-import { createFakeApi, json, never, type FakeApi, type Routes } from '../support/fake-api.js';
+import {
+  createFakeApi,
+  inTurn,
+  json,
+  never,
+  type FakeApi,
+  type Routes,
+} from '../support/fake-api.js';
 import { apiError } from './helpers.js';
 
 const TOKEN = 'Tok-catalog-7H6g5F4e';
@@ -166,14 +173,21 @@ describe('createCatalog', () => {
   });
 
   it('does not cache an aborted request', async () => {
-    const { catalog, api } = testCatalog({ 'GET /v1/catalog/blueprints/3.json': never() });
+    const { catalog, api } = testCatalog({
+      // The first call hangs until aborted; the second answers normally.
+      'GET /v1/catalog/blueprints/3.json': inTurn(never(), BLUEPRINT),
+    });
     const controller = new AbortController();
 
     const pending = catalog.blueprint(3, controller.signal);
     controller.abort();
     await expect(pending).rejects.toThrow(/abort/i);
 
-    expect(api.requests).toHaveLength(1);
+    // If the aborted attempt had cached anything, this would resolve from the cache instead of
+    // reaching the API, and the request count below would stay at 1.
+    await expect(catalog.blueprint(3, signal())).resolves.toEqual(BLUEPRINT);
+
+    expect(api.requests).toHaveLength(2);
   });
 
   it('rejects a response that does not parse, and does not cache it', async () => {
