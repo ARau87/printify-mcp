@@ -6,6 +6,7 @@ import { DEFAULT_API_BASE_URL, loadConfig, type Config, type Env } from './confi
 import { createLogger } from './log.js';
 import { PACKAGE_VERSION } from './package-info.js';
 import { createPrintifyClient } from './printify/client.js';
+import { createShopDirectory } from './printify/shops.js';
 import { createServer } from './server.js';
 import type { ToolServices } from './tools/define.js';
 import { ALL_TOOLS } from './tools/index.js';
@@ -137,11 +138,11 @@ export function main(argv: readonly string[], env: Env, io: CliIo = defaultIo): 
   }
 
   // Everything below happens once per process, however often serve calls the factory: one
-  // client, and so one rate limiter, for every server instance.
+  // client (and so one rate limiter) and one shop cache for every server instance.
   const { config } = result;
   const selection = selectTools(ALL_TOOLS, config);
   const client = createPrintifyClient({ token: config.token, baseUrl: config.apiBaseUrl });
-  const services: ToolServices = { client, config, log };
+  const services: ToolServices = { client, config, log, shops: createShopDirectory(client) };
   const instructions = serverInstructions(selection.skipped);
   io.serve(() => createServer({ tools: selection.enabled, services, instructions }), {
     onerror: (error) => {
