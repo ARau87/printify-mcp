@@ -147,7 +147,8 @@ export function networkError(route: Route, cause: unknown): PrintifyApiError {
 export function invalidResponseError(
   route: Route,
   status: number,
-  problem: 'a body that is not JSON' | 'an unexpected pagination envelope',
+  problem:
+    'a body that is not JSON' | 'an unexpected pagination envelope' | 'an unexpected shop list',
 ): PrintifyApiError {
   return new PrintifyApiError(
     `${route.method} ${route.path} returned HTTP ${String(status)} with ${problem}`,
