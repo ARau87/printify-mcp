@@ -294,8 +294,8 @@ describe('get_shipping_costs', () => {
     const data = expectToolData(await call('get_shipping_costs', { ...IDS, method: 'economy' }));
 
     expect(data).not.toHaveProperty('country');
-    expect(data.methods).toEqual([
-      expect.not.objectContaining({ matched: expect.anything() as unknown }),
-    ]);
+    const methods = data.methods as { method: string }[];
+    expect(methods).toHaveLength(1);
+    expect(methods[0]).not.toHaveProperty('matched');
   });
 });
