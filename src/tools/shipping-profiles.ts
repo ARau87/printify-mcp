@@ -1,6 +1,6 @@
 import type { ShippingRow } from '../printify/catalog.js';
 
-/** One rate, and every country and variant it applies to. The shape v1 shipping already uses. */
+/** One rate, and every country and variant it applies to — the shape v1 shipping profiles use, plus `variant_count` and a per-profile handling time. */
 export interface ShippingProfile {
   countries: string[];
   variant_ids: number[];
@@ -31,9 +31,15 @@ export function groupShippingProfiles(rows: readonly ShippingRow[]): ShippingPro
 
   const profiles = new Map<string, ShippingProfile>();
   for (const { row, variantIds } of byCountry.values()) {
+    // Order-sensitive on purpose: comparing variantIds as a set instead of this exact list could
+    // merge two countries whose variant coverage doesn't truly match, breaking the cross-product
+    // guarantee.
     const key = `${rateKey(row)}\u0000${variantIds.join(',')}`;
     const profile = profiles.get(key);
     if (profile !== undefined) {
+      // Can't actually fire: two entries here only share a key when they have the same rate and
+      // variant list, and if they'd also shared a country, pass 1 would have combined them into
+      // one byCountry entry already. Kept as a safety net, not because it's reachable.
       if (!profile.countries.includes(row.country)) profile.countries.push(row.country);
       continue;
     }

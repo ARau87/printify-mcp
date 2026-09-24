@@ -101,6 +101,24 @@ describe('groupShippingProfiles', () => {
     expect(profiles).toHaveLength(2);
   });
 
+  it('does not merge rows that differ only in the additional-item cost', () => {
+    const profiles = groupShippingProfiles([
+      row({ variant_id: 1 }),
+      row({ variant_id: 2, additional_items: { cost: 299, currency: 'USD' } }),
+    ]);
+
+    expect(profiles).toHaveLength(2);
+  });
+
+  it('does not merge rows that differ only in the additional-item currency', () => {
+    const profiles = groupShippingProfiles([
+      row({ variant_id: 1 }),
+      row({ variant_id: 2, additional_items: { cost: 219, currency: 'EUR' } }),
+    ]);
+
+    expect(profiles).toHaveLength(2);
+  });
+
   it('omits handling_days entirely when the rows have none', () => {
     const profiles = groupShippingProfiles([row({ handling_days: undefined })]);
 
