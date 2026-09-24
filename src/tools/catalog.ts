@@ -202,6 +202,29 @@ export const getPrintProviderTool = defineTool({
   },
 });
 
+export const listShippingMethodsTool = defineTool({
+  name: 'list_shipping_methods',
+  toolset: 'catalog',
+  description:
+    'Lists the shipping methods a print provider offers for a blueprint: standard, priority, ' +
+    'express or economy. Economy rates exist only here, not in get_shipping_info. Use ' +
+    'get_shipping_costs for what each method costs.',
+  annotations: READ_ONLY,
+  input: z.strictObject({ blueprint_id: blueprintId, print_provider_id: printProviderId }),
+  handler: async (input, ctx) => {
+    const methods = await ctx.catalog.shippingMethods(
+      input.blueprint_id,
+      input.print_provider_id,
+      ctx.signal,
+    );
+    return {
+      blueprint_id: input.blueprint_id,
+      print_provider_id: input.print_provider_id,
+      methods,
+    };
+  },
+});
+
 /** Every tool of the `catalog` toolset, in the order the drill-down uses them. */
 export const catalogTools: readonly Tool[] = [
   getBlueprintTool,
@@ -210,6 +233,7 @@ export const catalogTools: readonly Tool[] = [
   getShippingInfoTool,
   listPrintProvidersTool,
   getPrintProviderTool,
+  listShippingMethodsTool,
 ];
 
 /** Where the provider is, without the street address the model has no use for. */
