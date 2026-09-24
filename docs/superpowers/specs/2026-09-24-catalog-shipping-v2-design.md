@@ -144,7 +144,6 @@ test/printify/
 test/tools/
   shipping-profiles.test.ts      # new: grouping as a pure function
   catalog-shipping.test.ts       # new: both tools through the harness
-  catalog.test.ts                # the rule check now sees eight tools
 test/fixtures/
   catalog-shipping.ts            # new: the documented v2 examples and builders
 ```
@@ -206,10 +205,10 @@ reach the key — they are applied to the cached rows on every call.
 ### Schemas
 
 Both schemas parse the JSON:API envelope and `transform` it into the shape above, so what the cache
-holds is already `ShippingMethodName[]` or `ShippingRow[]` and no mapping runs on a cache hit. The
-plan must check that a transforming schema is still assignable to `fetchCached`'s
-`schema: z.ZodType<T>` parameter under Zod 4; if it is not, the schemas stay plain and the mapping
-moves into the two methods, above the cache rather than below it.
+holds is already `ShippingMethodName[]` or `ShippingRow[]` and no mapping runs on a cache hit. A
+transforming schema is assignable to `fetchCached`'s `schema: z.ZodType<T>` parameter under Zod 4,
+and `safeParse` still narrows to the transformed type; this was checked with `tsc --strict` before
+the plan was written.
 `z.object` strips unknown keys, so `shippingPlanId` (internal), `shippingType` (it only repeats the
 path), the `type` and `id` strings and the `links` object are all dropped at parse time and can
 never reach a tool result.
@@ -445,9 +444,9 @@ wired in fails its own tests. Each test starts with a cold cache.
 
 ### Changed tests
 
-`test/tools/catalog.test.ts`: `toolProblems(ALL_TOOLS)` now checks eight catalog tools. No change is
-needed to `test/support/harness.ts`, `test/tools/fixtures.ts` or `test/cli.test.ts` — the services
-already carry `catalog`.
+None. `test/tools/catalog.test.ts` runs `toolProblems(ALL_TOOLS)` and so covers the two new tools
+without being edited, and `test/support/harness.ts`, `test/tools/fixtures.ts` and
+`test/cli.test.ts` already build services that carry `catalog`.
 
 ### Fixtures
 
