@@ -521,3 +521,16 @@ describe('get_shipping_costs', () => {
     expectToolError(result, { kind: 'http', status: 404 });
   });
 });
+
+describe('the two shipping tools', () => {
+  it('point at each other, so the model can choose between them', async () => {
+    const { mcp } = await createTestServer();
+
+    const { tools } = await mcp.listTools();
+    const byName = new Map(tools.map((tool) => [tool.name, tool.description ?? '']));
+
+    expect(byName.get('get_shipping_info')).toContain('get_shipping_costs');
+    expect(byName.get('get_shipping_costs')).toContain('get_shipping_info');
+    expect(byName.get('list_shipping_methods')).toContain('get_shipping_costs');
+  });
+});

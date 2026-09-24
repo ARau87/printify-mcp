@@ -198,7 +198,8 @@ export const getShippingInfoTool = defineTool({
     'covers a set of countries and variant ids; REST_OF_THE_WORLD covers every country no ' +
     'profile lists. Costs are in cents of currency (450 = 4.50 USD): first_item is charged for ' +
     'the first item of this blueprint and provider in an order, additional_items for every ' +
-    'further one. The costs are not broken down by shipping method.',
+    'further one. The costs are not broken down by shipping method; get_shipping_costs gives ' +
+    'them per method, including economy.',
   annotations: READ_ONLY,
   input: z.strictObject({ blueprint_id: blueprintId, print_provider_id: printProviderId }),
   handler: async (input, ctx) => {
