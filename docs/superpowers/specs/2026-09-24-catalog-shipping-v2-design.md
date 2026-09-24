@@ -114,11 +114,13 @@ shop, and live tests are read-only by design.
 5. **`handling_days: { from, to }`.** v2 sends `handlingTime: { from, to }` in days where v1 sends
    `{ value, unit }`. Keeping `from`/`to` and naming the unit in the field avoids inventing a unit
    the API does not send.
-6. **`variant_ids` is capped at 50 per profile**, with `variant_count` giving the true number and
-   `variant_ids_truncated: true` when some were left out — the pattern `get_print_provider` already
-   uses for a provider's blueprints. Without it, a four-method comparison on a large blueprint
-   carries a couple of thousand ids that the caller can check far more cheaply with the
-   `variant_ids` filter.
+6. **`variant_ids` is never truncated.** A four-method comparison on a large blueprint can carry a
+   couple of thousand ids, and `get_print_provider` truncates its blueprint list for less. But a
+   profile's variant list is the answer to "does this rate apply to my variant", and a truncated
+   list cannot answer it — the caller would have to re-call with `variant_ids` to find out what
+   was cut. The `country` and `variant_ids` filters are the way to shrink a response, and they
+   shrink it far more than a cap would. `variant_count` stays, as `list_variants` has it, so the
+   model never has to count the array.
 7. **`list_shipping_methods` passes unknown method names through.** The service returns the names
    as strings in the order Printify sends them, so a fifth method would be visible rather than
    silently dropped. `get_shipping_costs`'s `method` input stays the documented four-value enum,
@@ -237,7 +239,6 @@ export interface ShippingProfile {
   countries: string[];
   variant_ids: number[];
   variant_count: number;
-  variant_ids_truncated?: true;
   first_item: { cost: number; currency: string };
   additional_items: { cost: number; currency: string };
   handling_days?: { from: number; to: number };
@@ -269,8 +270,7 @@ rows                                   profiles
 ```
 
 Everything keeps Printify's first-appearance order: profiles in the order their first row appeared,
-countries and variant ids likewise. Truncation is the last step, so `variant_count` is always the
-true number.
+countries and variant ids likewise.
 
 ## Tools
 
@@ -400,8 +400,7 @@ Test-first. None needs the network or a Printify account.
 - rows differing only in handling time do not merge;
 - a row with no `handling_days` does not merge with one that has it, and its profile omits the key;
 - profiles, countries and variant ids keep first-appearance order;
-- past 50 variant ids, `variant_ids` holds 50, `variant_count` holds the true number and
-  `variant_ids_truncated` is `true`; at exactly 50 the key is absent;
+- `variant_count` matches the length of `variant_ids`, however many there are;
 - no rows gives no profiles.
 
 ### `test/printify/catalog.test.ts` (extended)
@@ -456,7 +455,7 @@ already carry `catalog`.
 method list and per-method response as constants, extended to three variants across `US`, `DE` and
 `REST_OF_THE_WORLD` so grouping, the country fallback and the differently-priced-variant case all
 have real data; a variant priced differently in one country; and builders that take overrides,
-including one that generates a method response with any number of variants for the truncation case.
+including one that generates a method response with any number of variants.
 
 ## Acceptance criteria mapping
 
