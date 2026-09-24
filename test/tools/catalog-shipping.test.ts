@@ -532,5 +532,6 @@ describe('the two shipping tools', () => {
     expect(byName.get('get_shipping_info')).toContain('get_shipping_costs');
     expect(byName.get('get_shipping_costs')).toContain('get_shipping_info');
     expect(byName.get('list_shipping_methods')).toContain('get_shipping_costs');
+    expect(byName.get('get_shipping_costs')).toContain('list_shipping_methods');
   });
 });

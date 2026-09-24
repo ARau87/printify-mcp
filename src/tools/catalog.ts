@@ -268,8 +268,9 @@ export const getShippingCostsTool = defineTool({
     'cents of currency (399 = 3.99 USD): first_item is charged for the first item of this ' +
     "blueprint and provider in an order, additional_items for every further one. A profile's " +
     'rate applies to every country and variant it lists. REST_OF_THE_WORLD covers every country ' +
-    'no profile names; matched says when a country fell back to it. For a single overall rate ' +
-    'in one request, use get_shipping_info.',
+    'no profile names; matched says when a country fell back to it. See list_shipping_methods ' +
+    'for which methods a provider offers. For a single overall rate in one request, use ' +
+    'get_shipping_info.',
   annotations: READ_ONLY,
   input: z.strictObject({
     blueprint_id: blueprintId,
