@@ -1,7 +1,13 @@
 import { z } from 'zod';
-import type { Location, Variant, VariantList } from '../printify/catalog.js';
+import {
+  SHIPPING_METHODS,
+  type Location,
+  type Variant,
+  type VariantList,
+} from '../printify/catalog.js';
 import { defineTool, type Tool, type ToolAnnotations } from './define.js';
 import { omitKeys } from './shape.js';
+import { groupShippingProfiles } from './shipping-profiles.js';
 
 /** The blueprints `get_print_provider` lists before it truncates. */
 export const PROVIDER_BLUEPRINT_LIMIT = 50;
@@ -225,6 +231,38 @@ export const listShippingMethodsTool = defineTool({
   },
 });
 
+export const getShippingCostsTool = defineTool({
+  name: 'get_shipping_costs',
+  toolset: 'catalog',
+  description:
+    "Gets a print provider's shipping costs and handling time for a blueprint, broken down by " +
+    'shipping method. Costs are in cents of currency (399 = 3.99 USD): first_item is charged for ' +
+    'the first item of this blueprint and provider in an order, additional_items for every ' +
+    "further one. A profile's rate applies to every country and variant it lists. " +
+    'REST_OF_THE_WORLD covers every country no profile names. For a single overall rate in one ' +
+    'request, use get_shipping_info.',
+  annotations: READ_ONLY,
+  input: z.strictObject({
+    blueprint_id: blueprintId,
+    print_provider_id: printProviderId,
+    method: z.enum(SHIPPING_METHODS).describe('The shipping method to price.'),
+  }),
+  handler: async (input, ctx) => {
+    const rows = await ctx.catalog.shippingCosts(
+      input.blueprint_id,
+      input.print_provider_id,
+      input.method,
+      ctx.signal,
+    );
+    const profiles = groupShippingProfiles(rows);
+    return {
+      blueprint_id: input.blueprint_id,
+      print_provider_id: input.print_provider_id,
+      methods: [{ method: input.method, profile_count: profiles.length, profiles }],
+    };
+  },
+});
+
 /** Every tool of the `catalog` toolset, in the order the drill-down uses them. */
 export const catalogTools: readonly Tool[] = [
   getBlueprintTool,
@@ -234,6 +272,7 @@ export const catalogTools: readonly Tool[] = [
   listPrintProvidersTool,
   getPrintProviderTool,
   listShippingMethodsTool,
+  getShippingCostsTool,
 ];
 
 /** Where the provider is, without the street address the model has no use for. */
