@@ -3,6 +3,7 @@ import { McpServer } from '@modelcontextprotocol/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { main, type CliIo } from '../src/cli.js';
 import { PACKAGE_VERSION } from '../src/package-info.js';
+import { createCatalog } from '../src/printify/catalog.js';
 import { createPrintifyClient } from '../src/printify/client.js';
 import { createShopDirectory } from '../src/printify/shops.js';
 import type { Tool } from '../src/tools/define.js';
@@ -12,9 +13,11 @@ import { FIXTURE_TOOLS } from './tools/fixtures.js';
 // The tests below fill this stand-in for ALL_TOOLS with fixture tools.
 const allTools = vi.hoisted((): Tool[] => []);
 vi.mock('../src/tools/index.js', () => ({ ALL_TOOLS: allTools }));
-// Spies on createPrintifyClient and createShopDirectory while keeping the real implementations.
+// Spies on createPrintifyClient, createShopDirectory and createCatalog while keeping the real
+// implementations.
 vi.mock('../src/printify/client.js', { spy: true });
 vi.mock('../src/printify/shops.js', { spy: true });
+vi.mock('../src/printify/catalog.js', { spy: true });
 
 const TOKEN = 'Tok-cli-5E4d3C2b1A';
 const VARIABLES = [
@@ -236,6 +239,18 @@ describe('main', () => {
       expect(factory()).not.toBe(factory());
       expect(createPrintifyClient).toHaveBeenCalledTimes(1);
       expect(createShopDirectory).toHaveBeenCalledTimes(1);
+    });
+
+    it('creates one catalog for the process, however many servers it builds', () => {
+      vi.mocked(createCatalog).mockClear();
+      const { io, served } = fakeIo();
+      main([], env, io);
+      const call = served[0];
+      if (call === undefined) throw new Error('serve was not called');
+      const [factory] = call;
+      factory();
+      factory();
+      expect(createCatalog).toHaveBeenCalledTimes(1);
     });
 
     it('serves the enabled tools with instructions for the skipped ones', async () => {

@@ -5,6 +5,7 @@ import { serveStdio } from '@modelcontextprotocol/server/stdio';
 import { DEFAULT_API_BASE_URL, loadConfig, type Config, type Env } from './config.js';
 import { createLogger } from './log.js';
 import { PACKAGE_VERSION } from './package-info.js';
+import { createCatalog } from './printify/catalog.js';
 import { createPrintifyClient } from './printify/client.js';
 import { createShopDirectory } from './printify/shops.js';
 import { createServer } from './server.js';
@@ -142,7 +143,13 @@ export function main(argv: readonly string[], env: Env, io: CliIo = defaultIo): 
   const { config } = result;
   const selection = selectTools(ALL_TOOLS, config);
   const client = createPrintifyClient({ token: config.token, baseUrl: config.apiBaseUrl });
-  const services: ToolServices = { client, config, log, shops: createShopDirectory(client) };
+  const services: ToolServices = {
+    client,
+    config,
+    log,
+    shops: createShopDirectory(client),
+    catalog: createCatalog(client),
+  };
   const instructions = serverInstructions(selection.skipped);
   io.serve(() => createServer({ tools: selection.enabled, services, instructions }), {
     onerror: (error) => {

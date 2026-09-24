@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { loadConfig, type Config } from '../../src/config.js';
 import { createLogger } from '../../src/log.js';
+import { createCatalog } from '../../src/printify/catalog.js';
 import { createPrintifyClient } from '../../src/printify/client.js';
 import { createShopDirectory } from '../../src/printify/shops.js';
 import {
@@ -118,6 +119,7 @@ export function fixtureServices(routes: Routes = {}) {
   });
   const services: ToolServices = {
     client,
+    catalog: createCatalog(client),
     config,
     log: createLogger((text) => {
       logged.push(text);
