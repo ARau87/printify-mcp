@@ -2,6 +2,7 @@ import { z } from 'zod';
 import {
   SHIPPING_METHODS,
   type Location,
+  type ShippingMethod,
   type ShippingRow,
   type Variant,
   type VariantList,
@@ -261,38 +262,51 @@ export const getShippingCostsTool = defineTool({
   toolset: 'catalog',
   description:
     "Gets a print provider's shipping costs and handling time for a blueprint, broken down by " +
-    'shipping method. Filter with country (an ISO code such as DE) and with variant_ids from ' +
-    'list_variants. Costs are in cents of ' +
-    'currency (399 = 3.99 USD): first_item is charged for the first item of this blueprint and ' +
-    "provider in an order, additional_items for every further one. A profile's rate applies to " +
-    'every country and variant it lists. REST_OF_THE_WORLD covers every country no profile ' +
-    'names; matched says when a country fell back to it. For a single overall rate in one ' +
-    'request, use get_shipping_info.',
+    'shipping method. Leave method out to compare every method the provider offers. Filter with ' +
+    'country (an ISO code such as DE) and with variant_ids from list_variants. Costs are in ' +
+    'cents of currency (399 = 3.99 USD): first_item is charged for the first item of this ' +
+    "blueprint and provider in an order, additional_items for every further one. A profile's " +
+    'rate applies to every country and variant it lists. REST_OF_THE_WORLD covers every country ' +
+    'no profile names; matched says when a country fell back to it. For a single overall rate ' +
+    'in one request, use get_shipping_info.',
   annotations: READ_ONLY,
   input: z.strictObject({
     blueprint_id: blueprintId,
     print_provider_id: printProviderId,
-    method: z.enum(SHIPPING_METHODS).describe('The shipping method to price.'),
+    method: z
+      .enum(SHIPPING_METHODS)
+      .optional()
+      .describe('Leave out to compare every method this provider offers.'),
     country: shippingCountry,
     variant_ids: shippingVariantIds,
   }),
   handler: async (input, ctx) => {
-    const all = await ctx.catalog.shippingCosts(
-      input.blueprint_id,
-      input.print_provider_id,
-      input.method,
-      ctx.signal,
-    );
+    const { blueprint_id: blueprint, print_provider_id: provider } = input;
+    // Only the four known names can be priced; an undocumented one has no path we know.
+    const methods =
+      input.method === undefined
+        ? (await ctx.catalog.shippingMethods(blueprint, provider, ctx.signal)).filter(
+            isShippingMethod,
+          )
+        : [input.method];
     const wanted = input.variant_ids === undefined ? undefined : new Set(input.variant_ids);
-    const forVariants =
-      wanted === undefined ? all : all.filter((row) => wanted.has(row.variant_id));
-    const { rows, matched } = matchCountry(forVariants, input.country);
-    const profiles = groupShippingProfiles(rows);
+
+    const entries = await Promise.all(
+      methods.map(async (method) => {
+        const all = await ctx.catalog.shippingCosts(blueprint, provider, method, ctx.signal);
+        const forVariants =
+          wanted === undefined ? all : all.filter((row) => wanted.has(row.variant_id));
+        const { rows, matched } = matchCountry(forVariants, input.country);
+        const profiles = groupShippingProfiles(rows);
+        return { method, matched, profile_count: profiles.length, profiles };
+      }),
+    );
+
     return {
-      blueprint_id: input.blueprint_id,
-      print_provider_id: input.print_provider_id,
+      blueprint_id: blueprint,
+      print_provider_id: provider,
       country: input.country,
-      methods: [{ method: input.method, matched, profile_count: profiles.length, profiles }],
+      methods: entries,
     };
   },
 });
@@ -360,4 +374,9 @@ function matchCountry(
   const rest = rows.filter((row) => row.country.toUpperCase() === REST_OF_THE_WORLD);
   if (rest.length > 0) return { rows: rest, matched: 'rest_of_the_world' };
   return { rows: [], matched: 'none' };
+}
+
+/** Whether a name Printify listed is one of the four methods this server can price. */
+function isShippingMethod(name: string): name is ShippingMethod {
+  return (SHIPPING_METHODS as readonly string[]).includes(name);
 }

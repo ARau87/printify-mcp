@@ -5,6 +5,7 @@ import {
   SHIPPING_METHOD_LIST,
   shippingEntry,
   shippingResponse,
+  STANDARD_COSTS,
 } from '../fixtures/catalog-shipping.js';
 import { notFoundBody } from '../fixtures/errors.js';
 import { expectToolData, expectToolError } from '../support/expect.js';
@@ -13,6 +14,7 @@ import { createTestServer } from '../support/harness.js';
 
 const METHODS_PATH = '/v2/catalog/blueprints/3/print_providers/29/shipping.json';
 const ECONOMY_PATH = '/v2/catalog/blueprints/3/print_providers/29/shipping/economy.json';
+const STANDARD_PATH = '/v2/catalog/blueprints/3/print_providers/29/shipping/standard.json';
 
 const IDS = { blueprint_id: 3, print_provider_id: 29 };
 
@@ -418,5 +420,104 @@ describe('get_shipping_costs', () => {
 
     expectToolError(result, { kind: 'validation' });
     expect(api.requests).toEqual([]);
+  });
+
+  it('compares every method the provider offers when none is named', async () => {
+    const { call, api } = await createTestServer({
+      routes: {
+        [`GET ${METHODS_PATH}`]: methodList(['standard', 'economy']),
+        [`GET ${STANDARD_PATH}`]: STANDARD_COSTS,
+        [`GET ${ECONOMY_PATH}`]: ECONOMY_COSTS,
+      },
+    });
+
+    const result = await call('get_shipping_costs', IDS);
+
+    const data = expectToolData(result);
+    expect((data.methods as { method: string }[]).map((entry) => entry.method)).toEqual([
+      'standard',
+      'economy',
+    ]);
+    expect(api.requests).toHaveLength(3);
+  });
+
+  it('resolves the country separately for each method', async () => {
+    const { call } = await createTestServer({
+      routes: {
+        [`GET ${METHODS_PATH}`]: methodList(['standard', 'economy']),
+        [`GET ${STANDARD_PATH}`]: STANDARD_COSTS,
+        [`GET ${ECONOMY_PATH}`]: ECONOMY_COSTS,
+      },
+    });
+
+    const result = await call('get_shipping_costs', { ...IDS, country: 'DE' });
+
+    // Standard names Germany; economy does not, so only economy falls back.
+    expect(expectToolData(result)).toMatchObject({
+      country: 'DE',
+      methods: [
+        {
+          method: 'standard',
+          matched: 'country',
+          profiles: [
+            expect.objectContaining({
+              countries: ['DE'],
+              first_item: { cost: 499, currency: 'USD' },
+            }),
+          ],
+        },
+        {
+          method: 'economy',
+          matched: 'rest_of_the_world',
+          profiles: [
+            expect.objectContaining({
+              countries: ['REST_OF_THE_WORLD'],
+              first_item: { cost: 1100, currency: 'USD' },
+            }),
+          ],
+        },
+      ],
+    });
+  });
+
+  it('does not request a method name it does not recognise', async () => {
+    const { call, api } = await createTestServer({
+      routes: {
+        [`GET ${METHODS_PATH}`]: methodList(['standard', 'sea_freight']),
+        [`GET ${STANDARD_PATH}`]: STANDARD_COSTS,
+      },
+    });
+
+    const result = await call('get_shipping_costs', IDS);
+
+    expect((expectToolData(result).methods as { method: string }[]).map((e) => e.method)).toEqual([
+      'standard',
+    ]);
+    // Two requests, and the teardown check proves no request went to a sea_freight path.
+    expect(api.requests).toHaveLength(2);
+  });
+
+  it('still sends one request when a method is named', async () => {
+    const { call, api } = await createTestServer({
+      routes: { [`GET ${ECONOMY_PATH}`]: ECONOMY_COSTS },
+    });
+
+    await call('get_shipping_costs', { ...IDS, method: 'economy' });
+
+    expect(api.requests).toHaveLength(1);
+  });
+
+  it('fails the whole call when one method cannot be read', async () => {
+    const { call } = await createTestServer({
+      routes: {
+        [`GET ${METHODS_PATH}`]: methodList(['standard', 'economy']),
+        [`GET ${STANDARD_PATH}`]: STANDARD_COSTS,
+        [`GET ${ECONOMY_PATH}`]: json(notFoundBody(), 404),
+      },
+    });
+
+    const result = await call('get_shipping_costs', IDS);
+
+    expectToolError(result, { kind: 'http', status: 404 });
   });
 });
