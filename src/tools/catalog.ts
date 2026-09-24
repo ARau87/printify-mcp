@@ -2,6 +2,7 @@ import { z } from 'zod';
 import {
   SHIPPING_METHODS,
   type Location,
+  type ShippingRow,
   type Variant,
   type VariantList,
 } from '../printify/catalog.js';
@@ -40,6 +41,20 @@ const optionFilter = (option: string) =>
       `Only variants whose ${option} is one of these. Exact names, ignoring case and surrounding ` +
         `spaces; option_values lists every name.`,
     );
+
+const shippingCountry = z
+  .string()
+  .trim()
+  .toUpperCase()
+  .regex(
+    /^([A-Z]{2}|REST_OF_THE_WORLD)$/,
+    'country must be a two-letter ISO code such as DE, or REST_OF_THE_WORLD',
+  )
+  .optional()
+  .describe(
+    'Only the costs that apply to this country, as an ISO 3166-1 alpha-2 code such as DE. When ' +
+      'no rate names it, the REST_OF_THE_WORLD rate is returned and matched says so.',
+  );
 
 export const getBlueprintTool = defineTool({
   name: 'get_blueprint',
@@ -236,29 +251,33 @@ export const getShippingCostsTool = defineTool({
   toolset: 'catalog',
   description:
     "Gets a print provider's shipping costs and handling time for a blueprint, broken down by " +
-    'shipping method. Costs are in cents of currency (399 = 3.99 USD): first_item is charged for ' +
-    'the first item of this blueprint and provider in an order, additional_items for every ' +
-    "further one. A profile's rate applies to every country and variant it lists. " +
-    'REST_OF_THE_WORLD covers every country no profile names. For a single overall rate in one ' +
+    'shipping method. Filter with country (an ISO code such as DE). Costs are in cents of ' +
+    'currency (399 = 3.99 USD): first_item is charged for the first item of this blueprint and ' +
+    "provider in an order, additional_items for every further one. A profile's rate applies to " +
+    'every country and variant it lists. REST_OF_THE_WORLD covers every country no profile ' +
+    'names; matched says when a country fell back to it. For a single overall rate in one ' +
     'request, use get_shipping_info.',
   annotations: READ_ONLY,
   input: z.strictObject({
     blueprint_id: blueprintId,
     print_provider_id: printProviderId,
     method: z.enum(SHIPPING_METHODS).describe('The shipping method to price.'),
+    country: shippingCountry,
   }),
   handler: async (input, ctx) => {
-    const rows = await ctx.catalog.shippingCosts(
+    const all = await ctx.catalog.shippingCosts(
       input.blueprint_id,
       input.print_provider_id,
       input.method,
       ctx.signal,
     );
+    const { rows, matched } = matchCountry(all, input.country);
     const profiles = groupShippingProfiles(rows);
     return {
       blueprint_id: input.blueprint_id,
       print_provider_id: input.print_provider_id,
-      methods: [{ method: input.method, profile_count: profiles.length, profiles }],
+      country: input.country,
+      methods: [{ method: input.method, matched, profile_count: profiles.length, profiles }],
     };
   },
 });
@@ -304,4 +323,26 @@ function optionValues(variants: readonly Variant[]): Record<string, string[]> {
     }
   }
   return values;
+}
+
+const REST_OF_THE_WORLD = 'REST_OF_THE_WORLD';
+
+/** How a country filter matched: not at all, by name, or through the catch-all rate. */
+type CountryMatch = 'country' | 'rest_of_the_world' | 'none';
+
+/**
+ * The rows that apply to `country`. Printify lists only the countries it charges a specific rate
+ * for, so a country with no row of its own is shipped at the REST_OF_THE_WORLD rate — returned
+ * here, but never silently: `matched` says which rate this is.
+ */
+function matchCountry(
+  rows: readonly ShippingRow[],
+  country: string | undefined,
+): { rows: readonly ShippingRow[]; matched: CountryMatch | undefined } {
+  if (country === undefined) return { rows, matched: undefined };
+  const named = rows.filter((row) => row.country.toUpperCase() === country);
+  if (named.length > 0) return { rows: named, matched: 'country' };
+  const rest = rows.filter((row) => row.country.toUpperCase() === REST_OF_THE_WORLD);
+  if (rest.length > 0) return { rows: rest, matched: 'rest_of_the_world' };
+  return { rows: [], matched: 'none' };
 }

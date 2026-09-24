@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { ECONOMY_COSTS, methodList, SHIPPING_METHOD_LIST } from '../fixtures/catalog-shipping.js';
+import {
+  ECONOMY_COSTS,
+  methodList,
+  SHIPPING_METHOD_LIST,
+  shippingEntry,
+  shippingResponse,
+} from '../fixtures/catalog-shipping.js';
 import { notFoundBody } from '../fixtures/errors.js';
 import { expectToolData, expectToolError } from '../support/expect.js';
 import { json } from '../support/fake-api.js';
@@ -174,5 +180,122 @@ describe('get_shipping_costs', () => {
     const listed = tools.find((tool) => tool.name === 'get_shipping_costs');
 
     expect(listed?.annotations).toMatchObject({ readOnlyHint: true, openWorldHint: true });
+  });
+
+  it('returns only the rates that name the country', async () => {
+    const { call } = await createTestServer({
+      routes: { [`GET ${ECONOMY_PATH}`]: ECONOMY_COSTS },
+    });
+
+    const result = await call('get_shipping_costs', { ...IDS, method: 'economy', country: 'US' });
+
+    expect(expectToolData(result)).toMatchObject({
+      country: 'US',
+      methods: [
+        {
+          method: 'economy',
+          matched: 'country',
+          profile_count: 2,
+          profiles: [
+            expect.objectContaining({ countries: ['US'], variant_ids: [23494, 23495] }),
+            expect.objectContaining({ countries: ['US'], variant_ids: [23496] }),
+          ],
+        },
+      ],
+    });
+  });
+
+  it('falls back to the rest-of-the-world rate for a country with no rate of its own', async () => {
+    const { call } = await createTestServer({
+      routes: { [`GET ${ECONOMY_PATH}`]: ECONOMY_COSTS },
+    });
+
+    const result = await call('get_shipping_costs', { ...IDS, method: 'economy', country: 'DE' });
+
+    expect(expectToolData(result)).toMatchObject({
+      country: 'DE',
+      methods: [
+        {
+          matched: 'rest_of_the_world',
+          profile_count: 1,
+          profiles: [
+            expect.objectContaining({
+              countries: ['REST_OF_THE_WORLD'],
+              first_item: { cost: 1100, currency: 'USD' },
+            }),
+          ],
+        },
+      ],
+    });
+  });
+
+  it('trims and upper-cases the country', async () => {
+    const { call } = await createTestServer({
+      routes: { [`GET ${ECONOMY_PATH}`]: ECONOMY_COSTS },
+    });
+
+    const result = await call('get_shipping_costs', { ...IDS, method: 'economy', country: ' us ' });
+
+    expect(expectToolData(result)).toMatchObject({
+      country: 'US',
+      methods: [{ matched: 'country' }],
+    });
+  });
+
+  it('accepts REST_OF_THE_WORLD as a country in its own right', async () => {
+    const { call } = await createTestServer({
+      routes: { [`GET ${ECONOMY_PATH}`]: ECONOMY_COSTS },
+    });
+
+    const result = await call('get_shipping_costs', {
+      ...IDS,
+      method: 'economy',
+      country: 'rest_of_the_world',
+    });
+
+    expect(expectToolData(result)).toMatchObject({
+      country: 'REST_OF_THE_WORLD',
+      methods: [{ matched: 'country', profile_count: 1 }],
+    });
+  });
+
+  it('says none when there is no rate for the country and no catch-all', async () => {
+    const { call } = await createTestServer({
+      routes: {
+        [`GET ${ECONOMY_PATH}`]: shippingResponse([shippingEntry({ country: 'US' })]),
+      },
+    });
+
+    const result = await call('get_shipping_costs', { ...IDS, method: 'economy', country: 'DE' });
+
+    expect(expectToolData(result).methods).toEqual([
+      { method: 'economy', matched: 'none', profile_count: 0, profiles: [] },
+    ]);
+  });
+
+  it('rejects a country that is not a code, without sending a request', async () => {
+    const { call, api } = await createTestServer();
+
+    const result = await call('get_shipping_costs', {
+      ...IDS,
+      method: 'economy',
+      country: 'Germany',
+    });
+
+    expectToolError(result, { kind: 'validation' });
+    expect(api.requests).toEqual([]);
+  });
+
+  it('has no country or matched key when no country was asked for', async () => {
+    const { call } = await createTestServer({
+      routes: { [`GET ${ECONOMY_PATH}`]: ECONOMY_COSTS },
+    });
+
+    const data = expectToolData(await call('get_shipping_costs', { ...IDS, method: 'economy' }));
+
+    expect(data).not.toHaveProperty('country');
+    expect(data.methods).toEqual([
+      expect.not.objectContaining({ matched: expect.anything() as unknown }),
+    ]);
   });
 });
