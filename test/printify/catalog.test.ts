@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   createCatalog,
   STABLE_TTL_MS,
@@ -17,7 +17,13 @@ import {
   VARIANTS,
   VARIANTS_WITH_OUT_OF_STOCK,
 } from '../fixtures/catalog.js';
-import { methodList, SHIPPING_METHOD_LIST } from '../fixtures/catalog-shipping.js';
+import {
+  ECONOMY_COSTS,
+  methodList,
+  shippingEntry,
+  shippingResponse,
+  SHIPPING_METHOD_LIST,
+} from '../fixtures/catalog-shipping.js';
 import { notFoundBody } from '../fixtures/errors.js';
 import {
   createFakeApi,
@@ -33,6 +39,7 @@ const TOKEN = 'Tok-catalog-7H6g5F4e';
 const VARIANTS_PATH = '/v1/catalog/blueprints/3/print_providers/29/variants.json';
 const SHIPPING_PATH = '/v1/catalog/blueprints/3/print_providers/29/shipping.json';
 const V2_METHODS_PATH = '/v2/catalog/blueprints/3/print_providers/29/shipping.json';
+const V2_ECONOMY_PATH = '/v2/catalog/blueprints/3/print_providers/29/shipping/economy.json';
 
 /** A catalog over a real client and a fake API, with a clock the test moves. */
 function testCatalog(routes: Routes = {}): {
@@ -280,5 +287,113 @@ describe('createCatalog: v2 shipping methods', () => {
 
     const error = await apiError(catalog.shippingMethods(3, 29, signal()));
     expect(error.kind).toBe('invalid_response');
+  });
+});
+
+describe('createCatalog: v2 shipping costs', () => {
+  it('flattens the documented response into rows', async () => {
+    const { catalog, api } = testCatalog({ [`GET ${V2_ECONOMY_PATH}`]: ECONOMY_COSTS });
+
+    const rows = await catalog.shippingCosts(3, 29, 'economy', signal());
+
+    expect(rows).toHaveLength(9);
+    expect(rows[0]).toEqual({
+      variant_id: 23494,
+      country: 'US',
+      first_item: { cost: 399, currency: 'USD' },
+      additional_items: { cost: 219, currency: 'USD' },
+      handling_days: { from: 4, to: 8 },
+    });
+    api.expectRequest('GET', V2_ECONOMY_PATH);
+  });
+
+  it('keeps nothing Printify sends that a tool has no use for', async () => {
+    const { catalog } = testCatalog({ [`GET ${V2_ECONOMY_PATH}`]: ECONOMY_COSTS });
+
+    const rows = await catalog.shippingCosts(3, 29, 'economy', signal());
+
+    expect(JSON.stringify(rows)).not.toContain('shippingPlanId');
+    expect(JSON.stringify(rows)).not.toContain('shippingType');
+    expect(JSON.stringify(rows)).not.toContain('variant_shipping');
+  });
+
+  it('caches each method separately, for an hour', async () => {
+    const { catalog, api, tick } = testCatalog({
+      [`GET ${V2_ECONOMY_PATH}`]: ECONOMY_COSTS,
+      'GET /v2/catalog/blueprints/3/print_providers/29/shipping/standard.json': ECONOMY_COSTS,
+    });
+
+    await catalog.shippingCosts(3, 29, 'economy', signal());
+    await catalog.shippingCosts(3, 29, 'economy', signal());
+    await catalog.shippingCosts(3, 29, 'standard', signal());
+    expect(api.requests).toHaveLength(2);
+
+    tick(VOLATILE_TTL_MS);
+    await catalog.shippingCosts(3, 29, 'economy', signal());
+    expect(api.requests).toHaveLength(3);
+  });
+
+  it('turns a missing handling time into undefined without failing the response', async () => {
+    const { catalog } = testCatalog({
+      [`GET ${V2_ECONOMY_PATH}`]: shippingResponse([shippingEntry({ handlingTime: null })]),
+    });
+
+    const rows = await catalog.shippingCosts(3, 29, 'economy', signal());
+
+    expect(rows[0]?.handling_days).toBeUndefined();
+    expect(rows[0]?.first_item).toEqual({ cost: 399, currency: 'USD' });
+  });
+
+  it('fails a row with no variant id, and does not cache it', async () => {
+    const entry = shippingEntry();
+    const broken = { ...entry, attributes: { ...entry.attributes, variantId: 'twenty' } };
+    const { catalog, api } = testCatalog({ [`GET ${V2_ECONOMY_PATH}`]: { data: [broken] } });
+
+    const error = await apiError(catalog.shippingCosts(3, 29, 'economy', signal()));
+    expect(error.kind).toBe('invalid_response');
+    expect(error.message).toContain('an unexpected catalog response');
+
+    await apiError(catalog.shippingCosts(3, 29, 'economy', signal()));
+    expect(api.requests).toHaveLength(2);
+  });
+
+  it('fails a row with no cost', async () => {
+    const entry = shippingEntry();
+    const broken = {
+      ...entry,
+      attributes: { ...entry.attributes, shippingCost: { firstItem: { currency: 'USD' } } },
+    };
+    const { catalog } = testCatalog({ [`GET ${V2_ECONOMY_PATH}`]: { data: [broken] } });
+
+    const error = await apiError(catalog.shippingCosts(3, 29, 'economy', signal()));
+    expect(error.kind).toBe('invalid_response');
+  });
+
+  it('sends the caller signal, and caches nothing when the call is aborted', async () => {
+    const { catalog, api } = testCatalog({
+      // The first call hangs until aborted; the second answers normally.
+      [`GET ${V2_ECONOMY_PATH}`]: inTurn(never(), ECONOMY_COSTS),
+    });
+    const controller = new AbortController();
+
+    const pending = catalog.shippingCosts(3, 29, 'economy', controller.signal);
+    // The request reaches the fake API only after the rate limiter's own await, same as the
+    // cancellation tests in shop-id.test.ts and harness.test.ts.
+    await vi.waitUntil(() => api.requests.length === 1);
+    const sent = api.expectRequest('GET', V2_ECONOMY_PATH);
+    expect(sent.signal.aborted).toBe(false);
+    controller.abort();
+    expect(sent.signal.aborted).toBe(true);
+    await expect(pending).rejects.toThrow(/abort/i);
+
+    // Resolving from the cache here would leave the request count at 1.
+    await catalog.shippingCosts(3, 29, 'economy', signal());
+    expect(api.requests).toHaveLength(2);
+  });
+
+  it('returns no rows for a method the provider does not serve', async () => {
+    const { catalog } = testCatalog({ [`GET ${V2_ECONOMY_PATH}`]: { data: [] } });
+
+    expect(await catalog.shippingCosts(3, 29, 'economy', signal())).toEqual([]);
   });
 });
