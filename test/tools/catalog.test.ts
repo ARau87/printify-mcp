@@ -9,7 +9,9 @@ describe('ALL_TOOLS', () => {
 
   it('files every tool under its own toolset', () => {
     const misfiled = Object.entries(TOOLS_BY_TOOLSET).flatMap(([toolset, tools]) =>
-      tools.filter((tool) => tool.toolset !== toolset).map((tool) => `${tool.name}: ${toolset}`),
+      tools
+        .filter((tool) => tool.toolset !== toolset)
+        .map((tool) => `${tool.name} (toolset ${tool.toolset}) is filed under ${toolset}`),
     );
     expect(misfiled).toEqual([]);
   });

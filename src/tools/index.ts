@@ -1,10 +1,14 @@
 import { TOOLSETS, type Toolset } from '../toolsets.js';
 import { catalogTools } from './catalog.js';
 import type { Tool } from './define.js';
+import { shopsTools } from './shops.js';
 
-/** Each toolset's tools. A toolset issue fills in its own line. */
+/**
+ * Each toolset's tools, from `src/tools/<toolset>.ts`. A toolset's issue replaces its `[]` with
+ * its own array, so toolsets never edit the same line.
+ */
 export const TOOLS_BY_TOOLSET: Readonly<Record<Toolset, readonly Tool[]>> = {
-  shops: [],
+  shops: shopsTools,
   catalog: catalogTools,
   uploads: [],
   products: [],

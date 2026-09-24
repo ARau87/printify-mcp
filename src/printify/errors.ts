@@ -150,6 +150,7 @@ export function invalidResponseError(
   problem:
     | 'a body that is not JSON'
     | 'an unexpected pagination envelope'
+    | 'an unexpected shop list'
     | 'an unexpected catalog response',
 ): PrintifyApiError {
   return new PrintifyApiError(

@@ -5,16 +5,18 @@ import { main, type CliIo } from '../src/cli.js';
 import { PACKAGE_VERSION } from '../src/package-info.js';
 import { createCatalog } from '../src/printify/catalog.js';
 import { createPrintifyClient } from '../src/printify/client.js';
+import { createShopDirectory } from '../src/printify/shops.js';
 import type { Tool } from '../src/tools/define.js';
 import { connectClient } from './support/harness.js';
 import { FIXTURE_TOOLS } from './tools/fixtures.js';
 
-// ALL_TOOLS is mocked with a stand-in; the tests below fill it with their own fixture tools.
+// The tests below fill this stand-in for ALL_TOOLS with fixture tools.
 const allTools = vi.hoisted((): Tool[] => []);
 vi.mock('../src/tools/index.js', () => ({ ALL_TOOLS: allTools }));
-// Spies on createPrintifyClient while keeping the real implementation.
+// Spies on createPrintifyClient, createShopDirectory and createCatalog while keeping the real
+// implementations.
 vi.mock('../src/printify/client.js', { spy: true });
-// Spies on createCatalog while keeping the real implementation.
+vi.mock('../src/printify/shops.js', { spy: true });
 vi.mock('../src/printify/catalog.js', { spy: true });
 
 const TOKEN = 'Tok-cli-5E4d3C2b1A';
@@ -226,8 +228,9 @@ describe('main', () => {
       );
     });
 
-    it('creates one client however many servers the factory builds', () => {
+    it('creates one client and one shop cache however many servers the factory builds', () => {
       vi.mocked(createPrintifyClient).mockClear();
+      vi.mocked(createShopDirectory).mockClear();
       const { io, served } = fakeIo();
       main([], env, io);
       const call = served[0];
@@ -235,6 +238,7 @@ describe('main', () => {
       const [factory] = call;
       expect(factory()).not.toBe(factory());
       expect(createPrintifyClient).toHaveBeenCalledTimes(1);
+      expect(createShopDirectory).toHaveBeenCalledTimes(1);
     });
 
     it('creates one catalog for the process, however many servers it builds', () => {

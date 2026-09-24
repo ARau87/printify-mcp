@@ -181,3 +181,68 @@ export function shop(overrides: Partial<typeof SHOP> = {}): typeof SHOP {
 Add a module when you add the toolset that needs it — `test/fixtures/orders.ts` with the orders
 tools, and so on. Keep a fixture to the fields tools actually read, and take the shape from
 Printify's documentation rather than from a guess.
+
+## Adding a tool
+
+Tools are grouped into toolsets (`src/toolsets.ts`), and each toolset lives in one file,
+`src/tools/<toolset>.ts`. `src/tools/shops.ts` is a small, complete example.
+
+### Define it
+
+Use `defineTool` from `src/tools/define.ts`:
+
+- `name` in snake_case, and the `toolset` it belongs to.
+- `description`, written for the model: what the tool does, when to use it and what it costs.
+- All three `annotations` hints: `readOnlyHint`, `destructiveHint` and `idempotentHint`.
+  `openWorldHint` is added for you.
+- `gate: 'orders'` for a tool that spends money, `gate: 'destructive'` for one that cannot be
+  undone (it also needs `destructiveHint: true`). A read-only tool has no gate. A gated tool is
+  registered only when the user sets `PRINTIFY_ENABLE_ORDERS` or `PRINTIFY_ENABLE_DESTRUCTIVE`.
+  The client retries DELETE and other idempotent methods on 502, 503 and network errors, so a
+  destructive call that succeeded but whose response was lost can come back as a 404 on the retry
+  and reach the model as an error even though the change happened; such a tool's description
+  should tell the model to re-check state rather than assume the call did nothing.
+- `input`, a `z.strictObject`, so a misspelt argument is rejected rather than dropped.
+- `handler(input, ctx)`. Pass `{ signal: ctx.signal }` to `ctx.client.request`, and return a plain
+  object, never an array: `{ shops: [...] }`. The registry drops null and undefined properties and
+  sends the object as `structuredContent` and as JSON text, so an optional output field can simply
+  be left `undefined`. Drop heavy fields yourself; `omitKeys` in `src/tools/shape.ts` helps.
+
+Let a `PrintifyApiError` propagate: the registry turns it into an error result with a hint. Throw
+`new ToolError(message, hint)` for a deliberate refusal. Keep tokens out of both.
+
+State that lives as long as the process, like the shop cache, belongs in `ToolServices`, which
+`src/cli.ts` creates once. Never keep it in module scope or create it in `createServer`.
+
+### Resolve the shop
+
+A shop-scoped tool spreads `shopIdInput` from `src/tools/shop-id.ts` into its input and starts
+its handler with `resolveShopId`:
+
+```ts
+input: z.strictObject({ ...shopIdInput, product_id: z.string() }),
+handler: async (input, ctx) => {
+  const shopId = await resolveShopId(input, ctx);
+  // apiPath`/v1/shops/${shopId}/products/${input.product_id}.json`
+},
+```
+
+`resolveShopId` uses `shop_id`, else `PRINTIFY_SHOP_ID`, else the account's only shop. Otherwise
+it refuses with a `ToolError` that lists the shops. Only the last case costs a request, and the
+shop list is cached for the process. A destructive tool that acts on a whole shop, like
+`disconnect_shop`, takes a required `shop_id` instead, so it never acts on a shop the model did not
+name.
+
+### Wire it in
+
+Export the toolset's tools as `<toolset>Tools` and replace the toolset's `[]` in
+`TOOLS_BY_TOOLSET` in `src/tools/index.ts`. `ALL_TOOLS` is derived from that record in `TOOLSETS`
+order, so two toolsets never edit the same line. `test/tools/catalog.test.ts` checks every tool
+against the rules above, and that each one is filed under its own toolset.
+
+### Test it
+
+Test through the harness with the default tools, so every test goes through `ALL_TOOLS` and a tool
+that was never wired in fails its own tests. Pass `tools` only to add a fixture tool next to the
+real ones, e.g. `tools: [...ALL_TOOLS, getShopId]`. `test/tools/shops.test.ts` is a complete
+example, gated tool included.

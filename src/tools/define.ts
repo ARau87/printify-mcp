@@ -3,6 +3,7 @@ import type { Config } from '../config.js';
 import type { Logger } from '../log.js';
 import type { Catalog } from '../printify/catalog.js';
 import type { PrintifyClient } from '../printify/client.js';
+import type { ShopDirectory } from '../printify/shops.js';
 import type { Toolset } from '../toolsets.js';
 
 /**
@@ -16,6 +17,8 @@ export interface ToolServices {
   client: PrintifyClient;
   config: Config;
   log: Logger;
+  /** The account's shops, cached for the process. */
+  shops: ShopDirectory;
   /** The catalog reader and its cache, one per process. */
   catalog: Catalog;
 }

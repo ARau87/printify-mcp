@@ -3,6 +3,7 @@ import { loadConfig, type Config } from '../../src/config.js';
 import { createLogger } from '../../src/log.js';
 import { createCatalog } from '../../src/printify/catalog.js';
 import { createPrintifyClient } from '../../src/printify/client.js';
+import { createShopDirectory } from '../../src/printify/shops.js';
 import {
   defineTool,
   type Tool,
@@ -11,6 +12,7 @@ import {
   type ToolDefinition,
   type ToolServices,
 } from '../../src/tools/define.js';
+import { resolveShopId, shopIdInput } from '../../src/tools/shop-id.js';
 import { createFakeApi, type Routes } from '../support/fake-api.js';
 
 export const TOKEN = 'Tok-tools-4D3c2B1a';
@@ -81,6 +83,19 @@ export const FIXTURE_TOOLS: readonly Tool[] = [
   deleteWebhook,
 ];
 
+/**
+ * A shop-scoped tool that returns the shop id `resolveShopId` gives it, so resolution can be
+ * tested through the harness the way every shop-scoped tool resolves its shop.
+ */
+export const getShopId = defineTool({
+  name: 'get_shop_id',
+  toolset: 'shops',
+  description: 'Returns the shop id a shop-scoped tool would use.',
+  annotations: READ_ONLY,
+  input: z.strictObject({ ...shopIdInput }),
+  handler: async (input, ctx) => ({ shop_id: await resolveShopId(input, ctx) }),
+});
+
 /** The configuration `loadConfig` gives for just a token, with `overrides` applied. */
 export function fixtureConfig(overrides: Partial<Config> = {}): Config {
   const result = loadConfig({ PRINTIFY_API_TOKEN: TOKEN });
@@ -109,6 +124,7 @@ export function fixtureServices(routes: Routes = {}) {
     log: createLogger((text) => {
       logged.push(text);
     }),
+    shops: createShopDirectory(client),
   };
   return { services, logged, api };
 }
