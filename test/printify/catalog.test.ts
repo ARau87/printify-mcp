@@ -17,6 +17,7 @@ import {
   VARIANTS,
   VARIANTS_WITH_OUT_OF_STOCK,
 } from '../fixtures/catalog.js';
+import { methodList, SHIPPING_METHOD_LIST } from '../fixtures/catalog-shipping.js';
 import { notFoundBody } from '../fixtures/errors.js';
 import {
   createFakeApi,
@@ -31,6 +32,7 @@ import { apiError } from './helpers.js';
 const TOKEN = 'Tok-catalog-7H6g5F4e';
 const VARIANTS_PATH = '/v1/catalog/blueprints/3/print_providers/29/variants.json';
 const SHIPPING_PATH = '/v1/catalog/blueprints/3/print_providers/29/shipping.json';
+const V2_METHODS_PATH = '/v2/catalog/blueprints/3/print_providers/29/shipping.json';
 
 /** A catalog over a real client and a fake API, with a clock the test moves. */
 function testCatalog(routes: Routes = {}): {
@@ -222,6 +224,61 @@ describe('createCatalog', () => {
     });
 
     const error = await apiError(catalog.variants(3, 29, { showOutOfStock: false }, signal()));
+    expect(error.kind).toBe('invalid_response');
+  });
+});
+
+describe('createCatalog: v2 shipping methods', () => {
+  it('reads the documented v2 path and returns the names in order', async () => {
+    const { catalog, api } = testCatalog({ [`GET ${V2_METHODS_PATH}`]: SHIPPING_METHOD_LIST });
+
+    const methods = await catalog.shippingMethods(3, 29, signal());
+
+    expect(methods).toEqual(['standard', 'priority', 'express', 'economy']);
+    api.expectRequest('GET', V2_METHODS_PATH);
+  });
+
+  it('passes an undocumented method name through', async () => {
+    const { catalog } = testCatalog({
+      [`GET ${V2_METHODS_PATH}`]: methodList(['standard', 'sea_freight']),
+    });
+
+    expect(await catalog.shippingMethods(3, 29, signal())).toEqual(['standard', 'sea_freight']);
+  });
+
+  it('caches the method list for an hour', async () => {
+    const { catalog, api, tick } = testCatalog({
+      [`GET ${V2_METHODS_PATH}`]: SHIPPING_METHOD_LIST,
+    });
+
+    await catalog.shippingMethods(3, 29, signal());
+    tick(VOLATILE_TTL_MS - 1);
+    await catalog.shippingMethods(3, 29, signal());
+    expect(api.requests).toHaveLength(1);
+
+    tick(1);
+    await catalog.shippingMethods(3, 29, signal());
+    expect(api.requests).toHaveLength(2);
+  });
+
+  it('sends the caller signal', async () => {
+    const { catalog, api } = testCatalog({ [`GET ${V2_METHODS_PATH}`]: SHIPPING_METHOD_LIST });
+    const controller = new AbortController();
+
+    await catalog.shippingMethods(3, 29, controller.signal);
+
+    const sent = api.expectRequest('GET', V2_METHODS_PATH);
+    expect(sent.signal.aborted).toBe(false);
+    controller.abort();
+    expect(sent.signal.aborted).toBe(true);
+  });
+
+  it('fails a method entry with no name', async () => {
+    const { catalog } = testCatalog({
+      [`GET ${V2_METHODS_PATH}`]: { data: [{ type: 'shipping_method', id: '1', attributes: {} }] },
+    });
+
+    const error = await apiError(catalog.shippingMethods(3, 29, signal()));
     expect(error.kind).toBe('invalid_response');
   });
 });
