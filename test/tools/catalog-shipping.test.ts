@@ -298,4 +298,125 @@ describe('get_shipping_costs', () => {
     expect(methods).toHaveLength(1);
     expect(methods[0]).not.toHaveProperty('matched');
   });
+
+  it('returns only the rates for the variants asked for', async () => {
+    const { call } = await createTestServer({
+      routes: { [`GET ${ECONOMY_PATH}`]: ECONOMY_COSTS },
+    });
+
+    const result = await call('get_shipping_costs', {
+      ...IDS,
+      method: 'economy',
+      variant_ids: [23496],
+    });
+
+    expect(expectToolData(result).methods).toEqual([
+      {
+        method: 'economy',
+        profile_count: 3,
+        profiles: [
+          expect.objectContaining({
+            countries: ['US'],
+            variant_ids: [23496],
+            first_item: { cost: 599, currency: 'USD' },
+          }),
+          expect.objectContaining({
+            countries: ['CA'],
+            variant_ids: [23496],
+            first_item: { cost: 399, currency: 'USD' },
+          }),
+          expect.objectContaining({
+            countries: ['REST_OF_THE_WORLD'],
+            variant_ids: [23496],
+            first_item: { cost: 1100, currency: 'USD' },
+          }),
+        ],
+      },
+    ]);
+  });
+
+  it('merges countries that only differ over variants the filter dropped', async () => {
+    const { call } = await createTestServer({
+      routes: { [`GET ${ECONOMY_PATH}`]: ECONOMY_COSTS },
+    });
+
+    const result = await call('get_shipping_costs', {
+      ...IDS,
+      method: 'economy',
+      variant_ids: [23494, 23495],
+    });
+
+    // Without 23496, the US and Canada rates become identical and collapse into one profile.
+    expect(expectToolData(result).methods).toEqual([
+      {
+        method: 'economy',
+        profile_count: 2,
+        profiles: [
+          expect.objectContaining({
+            countries: ['US', 'CA'],
+            variant_ids: [23494, 23495],
+            variant_count: 2,
+          }),
+          expect.objectContaining({ countries: ['REST_OF_THE_WORLD'] }),
+        ],
+      },
+    ]);
+  });
+
+  it('combines the country and variant filters', async () => {
+    const { call } = await createTestServer({
+      routes: { [`GET ${ECONOMY_PATH}`]: ECONOMY_COSTS },
+    });
+
+    const result = await call('get_shipping_costs', {
+      ...IDS,
+      method: 'economy',
+      country: 'US',
+      variant_ids: [23496],
+    });
+
+    expect(expectToolData(result).methods).toEqual([
+      {
+        method: 'economy',
+        matched: 'country',
+        profile_count: 1,
+        profiles: [
+          expect.objectContaining({
+            countries: ['US'],
+            variant_ids: [23496],
+            first_item: { cost: 599, currency: 'USD' },
+          }),
+        ],
+      },
+    ]);
+  });
+
+  it('returns no profiles for variant ids the provider does not price', async () => {
+    const { call } = await createTestServer({
+      routes: { [`GET ${ECONOMY_PATH}`]: ECONOMY_COSTS },
+    });
+
+    const result = await call('get_shipping_costs', {
+      ...IDS,
+      method: 'economy',
+      variant_ids: [99999],
+    });
+
+    expect(expectToolData(result).methods).toEqual([
+      { method: 'economy', profile_count: 0, profiles: [] },
+    ]);
+  });
+
+  it('rejects an empty variant_ids array, without sending a request', async () => {
+    const { call, api } = await createTestServer();
+
+    const result = await call('get_shipping_costs', {
+      ...IDS,
+      method: 'economy',
+      variant_ids: [],
+    });
+
+    expectToolError(result, { kind: 'validation' });
+    expect(api.requests).toEqual([]);
+  });
 });

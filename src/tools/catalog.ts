@@ -56,6 +56,16 @@ const shippingCountry = z
       'no rate names it, the REST_OF_THE_WORLD rate is returned and matched says so.',
   );
 
+const shippingVariantIds = z
+  .array(z.number().int().positive())
+  .min(1)
+  .max(100)
+  .optional()
+  .describe(
+    'Only the costs for these variant ids, e.g. from list_variants. Leave it out for every ' +
+      'variant; an empty list is an error.',
+  );
+
 export const getBlueprintTool = defineTool({
   name: 'get_blueprint',
   toolset: 'catalog',
@@ -251,7 +261,8 @@ export const getShippingCostsTool = defineTool({
   toolset: 'catalog',
   description:
     "Gets a print provider's shipping costs and handling time for a blueprint, broken down by " +
-    'shipping method. Filter with country (an ISO code such as DE). Costs are in cents of ' +
+    'shipping method. Filter with country (an ISO code such as DE) and with variant_ids from ' +
+    'list_variants. Costs are in cents of ' +
     'currency (399 = 3.99 USD): first_item is charged for the first item of this blueprint and ' +
     "provider in an order, additional_items for every further one. A profile's rate applies to " +
     'every country and variant it lists. REST_OF_THE_WORLD covers every country no profile ' +
@@ -263,6 +274,7 @@ export const getShippingCostsTool = defineTool({
     print_provider_id: printProviderId,
     method: z.enum(SHIPPING_METHODS).describe('The shipping method to price.'),
     country: shippingCountry,
+    variant_ids: shippingVariantIds,
   }),
   handler: async (input, ctx) => {
     const all = await ctx.catalog.shippingCosts(
@@ -271,7 +283,10 @@ export const getShippingCostsTool = defineTool({
       input.method,
       ctx.signal,
     );
-    const { rows, matched } = matchCountry(all, input.country);
+    const wanted = input.variant_ids === undefined ? undefined : new Set(input.variant_ids);
+    const forVariants =
+      wanted === undefined ? all : all.filter((row) => wanted.has(row.variant_id));
+    const { rows, matched } = matchCountry(forVariants, input.country);
     const profiles = groupShippingProfiles(rows);
     return {
       blueprint_id: input.blueprint_id,
