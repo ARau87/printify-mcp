@@ -2,6 +2,7 @@ import { TOOLSETS, type Toolset } from '../toolsets.js';
 import { catalogTools } from './catalog.js';
 import type { Tool } from './define.js';
 import { shopsTools } from './shops.js';
+import { uploadsTools } from './uploads.js';
 
 /**
  * Each toolset's tools, from `src/tools/<toolset>.ts`. A toolset's issue replaces its `[]` with
@@ -10,7 +11,7 @@ import { shopsTools } from './shops.js';
 export const TOOLS_BY_TOOLSET: Readonly<Record<Toolset, readonly Tool[]>> = {
   shops: shopsTools,
   catalog: catalogTools,
-  uploads: [],
+  uploads: uploadsTools,
   products: [],
   publishing: [],
   personalization: [],
