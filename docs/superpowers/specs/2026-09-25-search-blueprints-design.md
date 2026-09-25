@@ -112,9 +112,10 @@ slices it, so `offset`/`limit` stay a concern of the tool and the module stays a
 
 Lowercase, then split on every character that is not a letter or a digit. "Unisex Heavy Blend™
 Hooded Sweatshirt" becomes `unisex heavy blend hooded sweatshirt`; "11oz" stays one token;
-"T-Shirt" becomes `t` and `shirt`. Empty tokens are dropped. Only the first 12 tokens of a query
-are used, so a pasted paragraph cannot turn into hundreds of comparisons per blueprint; the tokens
-beyond the cap are dropped before matching and so never appear in `unmatchedTerms`.
+"T-Shirt" becomes `t` and `shirt`. Empty tokens are dropped, and so are repeats: a word said twice
+must not score twice, nor eat the budget below. Only the first 12 distinct tokens of a query are
+used, so a pasted paragraph cannot turn into hundreds of comparisons per blueprint; tokens beyond
+the cap are dropped before matching and so never appear in `unmatchedTerms`.
 
 `description` has its HTML tags replaced by a space (`<[^>]*>` → `" "`) before tokenising, per
 decision 2.
@@ -152,6 +153,11 @@ puts the blueprints covering the most of the query first.
 
 `unmatchedTerms` is the set of tokens that matched no blueprint in the filtered set. It is computed
 over the whole set, not the returned page, so it does not shift as the caller pages.
+
+A query where **no** token matches anything is the extreme of the same case, not a separate one:
+`matched` is `'partial'`, `matches` is empty and `unmatchedTerms` holds every token. That is the
+honest report — the search ran and these words found nothing — and it is distinct from the empty
+`brand` filter below, where the filter, not the query, is why there is nothing.
 
 ### Filtering
 
