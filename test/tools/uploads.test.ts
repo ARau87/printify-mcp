@@ -196,3 +196,40 @@ describe('get_upload', () => {
     expect(api.requests).toHaveLength(0);
   });
 });
+
+describe('archive_upload', () => {
+  const ARCHIVE_PATH = `/v1/uploads/${UPLOAD.id}/archive.json`;
+
+  it('is turned off without PRINTIFY_ENABLE_DESTRUCTIVE, and the instructions say so', async () => {
+    const { mcp, selection } = await createTestServer();
+    const names = (await mcp.listTools()).tools.map((tool) => tool.name);
+    expect(names).toContain('list_uploads');
+    expect(names).not.toContain('archive_upload');
+    expect(selection.skipped.map(({ tool, reason }) => [tool.name, reason])).toContainEqual([
+      'archive_upload',
+      'destructive',
+    ]);
+    // disconnect_shop is skipped for the same reason, so the line names both.
+    expect(mcp.getInstructions()).toMatch(
+      /Irreversible tools \(.*archive_upload.*\): set PRINTIFY_ENABLE_DESTRUCTIVE=true\./,
+    );
+  });
+
+  it('archives an image when the flag is on', async () => {
+    const { call, api } = await createTestServer({
+      env: { PRINTIFY_ENABLE_DESTRUCTIVE: 'true' },
+      routes: { [`POST ${ARCHIVE_PATH}`]: json({}) },
+    });
+    expect(expectToolData(await call('archive_upload', { image_id: UPLOAD.id }))).toEqual({
+      image_id: UPLOAD.id,
+      archived: true,
+    });
+    api.expectRequest('POST', ARCHIVE_PATH);
+  });
+
+  it('is annotated as destructive rather than read-only', async () => {
+    const { mcp } = await createTestServer({ env: { PRINTIFY_ENABLE_DESTRUCTIVE: 'true' } });
+    const tool = (await mcp.listTools()).tools.find(({ name }) => name === 'archive_upload');
+    expect(tool?.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true });
+  });
+});

@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { PAGE_LIMITS } from '../printify/pagination.js';
-import { getUpload, listUploads, uploadImage } from '../printify/uploads.js';
+import { archiveUpload, getUpload, listUploads, uploadImage } from '../printify/uploads.js';
 import { defineTool, type Tool, type ToolAnnotations } from './define.js';
 import { omitKeys } from './shape.js';
 import { resolveUploadSource } from './upload-source.js';
@@ -114,4 +114,26 @@ export const getUploadTool = defineTool({
   handler: async (input, ctx) => await getUpload(ctx.client, input.image_id, ctx.signal),
 });
 
-export const uploadsTools: readonly Tool[] = [uploadImageTool, listUploadsTool, getUploadTool];
+export const archiveUploadTool = defineTool({
+  name: 'archive_upload',
+  toolset: 'uploads',
+  gate: 'destructive',
+  description:
+    'Archives an image, removing it from the Printify image library. There is no unarchive ' +
+    'endpoint, so this cannot be undone here. Confirm the image with the user first, for ' +
+    'example its file name from get_upload. If the call times out, check with get_upload before ' +
+    'calling it again rather than assuming nothing happened.',
+  annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true },
+  input: z.strictObject({ image_id: imageId }),
+  handler: async (input, ctx) => {
+    await archiveUpload(ctx.client, input.image_id, ctx.signal);
+    return { image_id: input.image_id, archived: true };
+  },
+});
+
+export const uploadsTools: readonly Tool[] = [
+  uploadImageTool,
+  listUploadsTool,
+  getUploadTool,
+  archiveUploadTool,
+];
