@@ -28,7 +28,7 @@ const blueprintId = z
   .number()
   .int()
   .positive()
-  .describe('The catalog blueprint id, e.g. from get_print_provider.');
+  .describe('The catalog blueprint id, from search_blueprints.');
 
 const printProviderId = z
   .number()
@@ -275,7 +275,8 @@ export const getPrintProviderTool = defineTool({
   description:
     'Gets one print provider: its name, its address, and the blueprints it offers (id, title, ' +
     `brand and model). Only the first ${String(PROVIDER_BLUEPRINT_LIMIT)} blueprints are ` +
-    'listed; blueprint_count gives the total.',
+    'listed and blueprint_count gives the total, so use search_blueprints to find a blueprint ' +
+    'by name rather than paging this list.',
   annotations: READ_ONLY,
   input: z.strictObject({ print_provider_id: printProviderId }),
   handler: async (input, ctx) => {
