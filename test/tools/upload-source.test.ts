@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { chmod, mkdir, mkdtemp, realpath, symlink, writeFile } from 'node:fs/promises';
+import { describe, expect, it, onTestFinished } from 'vitest';
+import { chmod, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ToolError } from '../../src/tools/define.js';
@@ -110,6 +110,14 @@ describe('resolveUploadSource: base64', () => {
     expect(body).toMatchObject({ contents: HELLO });
   });
 
+  it('strips whitespace before a data: prefix as well as after it', async () => {
+    const { body } = await resolveUploadSource(
+      { base64: `  data:image/png;base64,${HELLO}`, file_name: 'a.png' },
+      [],
+    );
+    expect(body).toMatchObject({ contents: HELLO });
+  });
+
   it('refuses without a file_name, which Printify requires', async () => {
     const error = await refusal({ base64: HELLO });
     expect(error.message).toContain('file_name');
@@ -142,7 +150,9 @@ describe('resolveUploadSource: base64', () => {
  * `/private/var`, and `PRINTIFY_UPLOAD_DIRS` holds real paths.
  */
 async function allowedDir(): Promise<string> {
-  return await realpath(await mkdtemp(join(tmpdir(), 'printify-uploads-')));
+  const dir = await realpath(await mkdtemp(join(tmpdir(), 'printify-uploads-')));
+  onTestFinished(() => rm(dir, { recursive: true, force: true }));
+  return dir;
 }
 
 /** Writes `name` into `dir` with `contents`, and returns its path. */
@@ -218,6 +228,7 @@ describe('resolveUploadSource: file_path', () => {
     const dir = await allowedDir();
     const sibling = `${dir}-private`;
     await mkdir(sibling);
+    onTestFinished(() => rm(sibling, { recursive: true, force: true }));
     const path = await file(sibling, 'secret.png');
     const error = await refusal({ file_path: path }, [dir]);
     expect(error.message).toContain('outside the directories the user allowed');
@@ -231,6 +242,25 @@ describe('resolveUploadSource: file_path', () => {
     const gif = await file(dir, 'sunset.gif');
     const error = await refusal({ file_path: gif }, [dir]);
     expect(error.message).toContain('.png, .jpg, .jpeg');
+  });
+
+  it('accepts .jpg and .jpeg extensions', async () => {
+    const dir = await allowedDir();
+    const jpg = await file(dir, 'photo.jpg', 'hello');
+    expect(await resolveUploadSource({ file_path: jpg }, [dir])).toMatchObject({
+      body: { file_name: 'photo.jpg', contents: HELLO },
+    });
+    const jpeg = await file(dir, 'photo.jpeg', 'hello');
+    expect(await resolveUploadSource({ file_path: jpeg }, [dir])).toMatchObject({
+      body: { file_name: 'photo.jpeg', contents: HELLO },
+    });
+  });
+
+  it('matches an allowed directory of "/", instead of refusing every file', async () => {
+    const dir = await allowedDir();
+    const path = await file(dir, 'sunset.png', 'hello');
+    const { body } = await resolveUploadSource({ file_path: path }, ['/']);
+    expect(body).toMatchObject({ file_name: 'sunset.png', contents: HELLO });
   });
 
   it('refuses a relative path', async () => {

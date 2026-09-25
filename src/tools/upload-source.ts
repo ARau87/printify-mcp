@@ -107,7 +107,7 @@ function resolveBase64(contents: string, fileName: string | undefined): Resolved
   if (name === '') {
     throw new ToolError('base64 needs file_name as well: every upload is named.', NAME_HINT);
   }
-  const cleaned = contents.replace(DATA_URL, '').replaceAll(/\s+/gu, '');
+  const cleaned = contents.trim().replace(DATA_URL, '').replaceAll(/\s+/gu, '');
   if (cleaned === '' || cleaned.length % 4 !== 0 || !BASE64.test(cleaned)) {
     throw new ToolError('base64 is not a valid base64 string.', BASE64_HINT);
   }
@@ -161,7 +161,10 @@ function formatSize(bytes: number): string {
 
 /** Tests whether a path (real or lexical) is inside or equals one of the allowed directories. */
 function isInAllowedDirs(checkPath: string, uploadDirs: readonly string[]): boolean {
-  return uploadDirs.some((dir) => checkPath === dir || checkPath.startsWith(dir + sep));
+  return uploadDirs.some((dir) => {
+    const prefix = dir.endsWith(sep) ? dir : dir + sep;
+    return checkPath === dir || checkPath.startsWith(prefix);
+  });
 }
 
 /**

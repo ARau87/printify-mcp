@@ -1,7 +1,7 @@
-import { mkdtemp, realpath, writeFile } from 'node:fs/promises';
+import { mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, onTestFinished } from 'vitest';
 import { apiErrorBody } from '../fixtures/errors.js';
 import { UPLOAD, UPLOAD_LISTED, uploadsPage } from '../fixtures/uploads.js';
 import { expectToolData, expectToolError } from '../support/expect.js';
@@ -15,6 +15,7 @@ const HELLO = 'aGVsbG8=';
 /** A real directory the server is allowed to read, with `files` written into it. */
 async function allowedDir(files: Readonly<Record<string, Buffer | string>> = {}): Promise<string> {
   const dir = await realpath(await mkdtemp(join(tmpdir(), 'printify-tools-')));
+  onTestFinished(() => rm(dir, { recursive: true, force: true }));
   for (const [name, contents] of Object.entries(files)) {
     await writeFile(join(dir, name), contents);
   }

@@ -42,10 +42,14 @@ describe('uploadImage', () => {
 
   it('gives an upload longer than the default timeout, for a large body', async () => {
     const timeout = vi.spyOn(AbortSignal, 'timeout');
-    const { client } = testClient({ 'POST /v1/uploads/images.json': UPLOAD });
-    await uploadImage(client, CONTENTS, live());
-    expect(UPLOAD_TIMEOUT_MS).toBe(120_000);
-    expect(timeout).toHaveBeenCalledWith(UPLOAD_TIMEOUT_MS);
+    try {
+      const { client } = testClient({ 'POST /v1/uploads/images.json': UPLOAD });
+      await uploadImage(client, CONTENTS, live());
+      expect(UPLOAD_TIMEOUT_MS).toBe(120_000);
+      expect(timeout).toHaveBeenCalledWith(UPLOAD_TIMEOUT_MS);
+    } finally {
+      timeout.mockRestore();
+    }
   });
 
   it('keeps a record whose optional fields are missing or the wrong type', async () => {
