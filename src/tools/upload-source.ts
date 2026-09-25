@@ -1,5 +1,5 @@
 import { readFile, realpath, stat } from 'node:fs/promises';
-import { basename, extname, isAbsolute, sep } from 'node:path';
+import { basename, extname, isAbsolute, resolve, sep } from 'node:path';
 import { expandHome } from '../config.js';
 import type { UploadBody } from '../printify/uploads.js';
 import { ToolError } from './define.js';
@@ -159,11 +159,17 @@ function formatSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+/** Tests whether a path (real or lexical) is inside or equals one of the allowed directories. */
+function isInAllowedDirs(checkPath: string, uploadDirs: readonly string[]): boolean {
+  return uploadDirs.some((dir) => checkPath === dir || checkPath.startsWith(dir + sep));
+}
+
 /**
  * Reads a local file, but only inside the directories the user allowed. Every check is its own
  * refusal, so the model learns what to change. The path is resolved first and every later check
  * uses the real path, so a symlink can neither escape the allowed directories nor disguise the
- * file's type.
+ * file's type. When realpath fails, the path is checked lexically first to prevent using nonexistent
+ * files to probe whether files exist outside the allowed directories.
  */
 async function resolveFile(
   path: string,
@@ -182,9 +188,20 @@ async function resolveFile(
   try {
     real = await realpath(expanded);
   } catch (error) {
+    // Realpath failed, so lexically check if the path is in an allowed directory.
+    // If not, refuse without revealing whether the file exists outside the allowlist.
+    const lexical = resolve(expanded);
+    if (!isInAllowedDirs(lexical, uploadDirs)) {
+      throw new ToolError(
+        `${path} is outside the directories the user allowed for uploads: ${uploadDirs.join(', ')}.`,
+        'Ask the user to move the file into one of them, or to add its directory to ' +
+          'PRINTIFY_UPLOAD_DIRS and restart their MCP client.',
+      );
+    }
+    // Path is lexically inside an allowed directory but cannot be read; report the errno.
     throw unreadable(path, error);
   }
-  if (!uploadDirs.some((dir) => real === dir || real.startsWith(dir + sep))) {
+  if (!isInAllowedDirs(real, uploadDirs)) {
     throw new ToolError(
       `${path} is outside the directories the user allowed for uploads: ${uploadDirs.join(', ')}.`,
       'Ask the user to move the file into one of them, or to add its directory to ' +
@@ -199,7 +216,12 @@ async function resolveFile(
       'Convert the image first, or pass a public url, which Printify downloads itself.',
     );
   }
-  const stats = await stat(real);
+  let stats;
+  try {
+    stats = await stat(real);
+  } catch (error) {
+    throw unreadable(path, error);
+  }
   if (!stats.isFile()) {
     throw new ToolError(`${path} is not a file.`, 'Pass the path of an image file.');
   }
@@ -210,7 +232,12 @@ async function resolveFile(
   const name = given === '' ? basename(expanded) : given;
   // stat before readFile: an oversized file is refused without ever being held in memory.
   if (stats.size > MAX_BYTES) throw tooLarge(name, stats.size);
-  const contents = await readFile(real, { encoding: 'base64' });
+  let contents;
+  try {
+    contents = await readFile(real, { encoding: 'base64' });
+  } catch (error) {
+    throw unreadable(path, error);
+  }
   return { body: { file_name: name, contents }, warning: warningFor(name, stats.size) };
 }
 

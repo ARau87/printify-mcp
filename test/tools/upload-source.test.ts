@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mkdir, mkdtemp, realpath, symlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, realpath, symlink, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ToolError } from '../../src/tools/define.js';
@@ -267,5 +267,20 @@ describe('resolveUploadSource: file_path', () => {
     expect(warning).toContain('poster.png is 5.0 MB');
     const huge = await file(dir, 'huge.png', Buffer.alloc(MAX_BYTES + 1));
     expect((await refusal({ file_path: huge }, [dir])).message).toContain('huge.png is 25.0 MB');
+  });
+
+  it.skipIf(process.getuid?.() === 0)('refuses an unreadable file with its errno', async () => {
+    const dir = await allowedDir();
+    const path = await file(dir, 'unreadable.png', 'hello');
+    await chmod(path, 0o000);
+    const error = await refusal({ file_path: path }, [dir]);
+    expect(error.message).toContain('cannot be read (EACCES)');
+  });
+
+  it('refuses a nonexistent path outside the allowed directory', async () => {
+    const [allowed, other] = [await allowedDir(), await allowedDir()];
+    const path = join(other, 'missing.png');
+    const error = await refusal({ file_path: path }, [allowed]);
+    expect(error.message).toContain('outside the directories the user allowed');
   });
 });

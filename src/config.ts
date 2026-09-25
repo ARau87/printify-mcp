@@ -157,7 +157,7 @@ function resolveUploadDir(entry: string): { ok: true; dir: string } | { ok: fals
     if (!statSync(path).isDirectory()) {
       return { ok: false, error: `PRINTIFY_UPLOAD_DIRS: "${entry}" is not a directory` };
     }
-    return { ok: true, dir: realpathSync(path) };
+    return { ok: true, dir: realpathSync.native(path) };
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
     const problem =
