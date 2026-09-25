@@ -53,11 +53,13 @@ jobs:
           grep -q '"name":"printify-mcp"' <<<"$output"
           grep -q '"name":"list_shops"' <<<"$output"
           ! grep -q '"name":"disconnect_shop"' <<<"$output"
+          ! grep -q '"name":"archive_upload"' <<<"$output"
           # Every catalog tool reaches a real client over the built artifact. Each toolset adds its
           # own names here; the count is deliberately not asserted, so a new toolset does not fail.
           for tool in get_blueprint list_blueprint_providers list_variants \
             get_shipping_info list_print_providers get_print_provider \
-            list_shipping_methods get_shipping_costs; do
+            list_shipping_methods get_shipping_costs \
+            upload_image list_uploads get_upload; do
             grep -q "\"name\":\"$tool\"" <<<"$output"
           done
       - name: Check --version

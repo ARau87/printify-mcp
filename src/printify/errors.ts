@@ -151,7 +151,8 @@ export function invalidResponseError(
     | 'a body that is not JSON'
     | 'an unexpected pagination envelope'
     | 'an unexpected shop list'
-    | 'an unexpected catalog response',
+    | 'an unexpected catalog response'
+    | 'an unexpected uploads response',
 ): PrintifyApiError {
   return new PrintifyApiError(
     `${route.method} ${route.path} returned HTTP ${String(status)} with ${problem}`,
