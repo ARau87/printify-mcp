@@ -111,6 +111,61 @@ const shippingSchema = z.object({
   ),
 });
 
+/** The four shipping methods `get_shipping_costs` can request, in the docs' order. */
+export const SHIPPING_METHODS = ['standard', 'priority', 'express', 'economy'] as const;
+
+export type ShippingMethod = (typeof SHIPPING_METHODS)[number];
+
+/** A method name as `shipping.json` lists it: one of the four, or something Printify added. */
+export type ShippingMethodName = string;
+
+// The JSON:API envelope is flattened here, so the cache holds names and nothing else. `type`,
+// `id` and the `links` object are stripped: the docs' links object has a typo and no use.
+const shippingMethodListSchema = z
+  .object({ data: z.array(z.object({ attributes: z.object({ name: z.string() }) })) })
+  .transform(({ data }): ShippingMethodName[] => data.map((entry) => entry.attributes.name));
+
+/** One variant's cost to one country, flattened from a v2 `data[]` entry. */
+export interface ShippingRow {
+  variant_id: number;
+  /** An ISO code, or REST_OF_THE_WORLD for every country no other row names. */
+  country: string;
+  first_item: { cost: number; currency: string };
+  additional_items: { cost: number; currency: string };
+  handling_days: { from: number; to: number } | undefined;
+}
+
+// v2 sends `amount`; the rest of this codebase says `cost`, so the rename happens here.
+const v2CostSchema = z
+  .object({ amount: z.number(), currency: z.string() })
+  .transform(({ amount, currency }) => ({ cost: amount, currency }));
+
+const shippingRowsSchema = z
+  .object({
+    data: z.array(
+      z.object({
+        attributes: z.object({
+          variantId: z.number().int(),
+          country: z.object({ code: z.string() }),
+          handlingTime: lenient(z.object({ from: z.number(), to: z.number() })),
+          shippingCost: z.object({
+            firstItem: v2CostSchema,
+            additionalItems: v2CostSchema,
+          }),
+        }),
+      }),
+    ),
+  })
+  .transform(({ data }): ShippingRow[] =>
+    data.map(({ attributes }) => ({
+      variant_id: attributes.variantId,
+      country: attributes.country.code,
+      first_item: attributes.shippingCost.firstItem,
+      additional_items: attributes.shippingCost.additionalItems,
+      handling_days: attributes.handlingTime,
+    })),
+  );
+
 export type Blueprint = z.infer<typeof blueprintSchema>;
 export type BlueprintProvider = z.infer<typeof blueprintProviderSchema>;
 export type PrintProvider = z.infer<typeof printProviderSchema>;
@@ -148,6 +203,19 @@ export interface Catalog {
     printProviderId: number,
     signal: AbortSignal,
   ) => Promise<Shipping>;
+  /** The shipping methods a provider offers for a blueprint, in Printify's order. 1 h. */
+  shippingMethods: (
+    blueprintId: number,
+    printProviderId: number,
+    signal: AbortSignal,
+  ) => Promise<readonly ShippingMethodName[]>;
+  /** One method's costs, one row per variant and country. 1 h. */
+  shippingCosts: (
+    blueprintId: number,
+    printProviderId: number,
+    method: ShippingMethod,
+    signal: AbortSignal,
+  ) => Promise<readonly ShippingRow[]>;
 }
 
 export interface CatalogOptions {
@@ -243,6 +311,24 @@ export function createCatalog(client: PrintifyClient, options: CatalogOptions = 
       return fetchCached(
         shippingSchema,
         apiPath`/v1/catalog/blueprints/${blueprintId}/print_providers/${printProviderId}/shipping.json`,
+        VOLATILE_TTL_MS,
+        signal,
+      );
+    },
+
+    shippingMethods(blueprintId, printProviderId, signal) {
+      return fetchCached(
+        shippingMethodListSchema,
+        apiPath`/v2/catalog/blueprints/${blueprintId}/print_providers/${printProviderId}/shipping.json`,
+        VOLATILE_TTL_MS,
+        signal,
+      );
+    },
+
+    shippingCosts(blueprintId, printProviderId, method, signal) {
+      return fetchCached(
+        shippingRowsSchema,
+        apiPath`/v2/catalog/blueprints/${blueprintId}/print_providers/${printProviderId}/shipping/${method}.json`,
         VOLATILE_TTL_MS,
         signal,
       );

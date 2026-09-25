@@ -1,7 +1,15 @@
 import { z } from 'zod';
-import type { Location, Variant, VariantList } from '../printify/catalog.js';
+import {
+  SHIPPING_METHODS,
+  type Location,
+  type ShippingMethod,
+  type ShippingRow,
+  type Variant,
+  type VariantList,
+} from '../printify/catalog.js';
 import { defineTool, type Tool, type ToolAnnotations } from './define.js';
 import { omitKeys } from './shape.js';
+import { groupShippingProfiles } from './shipping-profiles.js';
 
 /** The blueprints `get_print_provider` lists before it truncates. */
 export const PROVIDER_BLUEPRINT_LIMIT = 50;
@@ -34,6 +42,30 @@ const optionFilter = (option: string) =>
       `Only variants whose ${option} is one of these. Exact names, ignoring case and surrounding ` +
         `spaces; option_values lists every name.`,
     );
+
+const shippingCountry = z
+  .string()
+  .trim()
+  .toUpperCase()
+  .regex(
+    /^([A-Z]{2}|REST_OF_THE_WORLD)$/,
+    'country must be a two-letter ISO code such as DE, or REST_OF_THE_WORLD',
+  )
+  .optional()
+  .describe(
+    'Only the costs that apply to this country, as an ISO 3166-1 alpha-2 code such as DE. When ' +
+      'no rate names it, the REST_OF_THE_WORLD rate is returned and matched says so.',
+  );
+
+const shippingVariantIds = z
+  .array(z.number().int().positive())
+  .min(1)
+  .max(100)
+  .optional()
+  .describe(
+    'Only the costs for these variant ids, e.g. from list_variants. Leave it out for every ' +
+      'variant; an empty list is an error.',
+  );
 
 export const getBlueprintTool = defineTool({
   name: 'get_blueprint',
@@ -166,7 +198,8 @@ export const getShippingInfoTool = defineTool({
     'covers a set of countries and variant ids; REST_OF_THE_WORLD covers every country no ' +
     'profile lists. Costs are in cents of currency (450 = 4.50 USD): first_item is charged for ' +
     'the first item of this blueprint and provider in an order, additional_items for every ' +
-    'further one. The costs are not broken down by shipping method.',
+    'further one. The costs are not broken down by shipping method; get_shipping_costs gives ' +
+    'them per method, including economy.',
   annotations: READ_ONLY,
   input: z.strictObject({ blueprint_id: blueprintId, print_provider_id: printProviderId }),
   handler: async (input, ctx) => {
@@ -202,6 +235,84 @@ export const getPrintProviderTool = defineTool({
   },
 });
 
+export const listShippingMethodsTool = defineTool({
+  name: 'list_shipping_methods',
+  toolset: 'catalog',
+  description:
+    'Lists the shipping methods a print provider offers for a blueprint: standard, priority, ' +
+    'express or economy. Economy rates exist only here, not in get_shipping_info. Use ' +
+    'get_shipping_costs for what each method costs.',
+  annotations: READ_ONLY,
+  input: z.strictObject({ blueprint_id: blueprintId, print_provider_id: printProviderId }),
+  handler: async (input, ctx) => {
+    const methods = await ctx.catalog.shippingMethods(
+      input.blueprint_id,
+      input.print_provider_id,
+      ctx.signal,
+    );
+    return {
+      blueprint_id: input.blueprint_id,
+      print_provider_id: input.print_provider_id,
+      methods,
+    };
+  },
+});
+
+export const getShippingCostsTool = defineTool({
+  name: 'get_shipping_costs',
+  toolset: 'catalog',
+  description:
+    "Gets a print provider's shipping costs and handling time for a blueprint, broken down by " +
+    'shipping method. Leave method out to compare every method the provider offers. Filter with ' +
+    'country (an ISO code such as DE) and with variant_ids from list_variants. Costs are in ' +
+    'cents of currency (399 = 3.99 USD): first_item is charged for the first item of this ' +
+    "blueprint and provider in an order, additional_items for every further one. A profile's " +
+    'rate applies to every country and variant it lists. REST_OF_THE_WORLD covers every country ' +
+    'no profile names; matched says when a country fell back to it. See list_shipping_methods ' +
+    'for which methods a provider offers. For a single overall rate in one request, use ' +
+    'get_shipping_info.',
+  annotations: READ_ONLY,
+  input: z.strictObject({
+    blueprint_id: blueprintId,
+    print_provider_id: printProviderId,
+    method: z
+      .enum(SHIPPING_METHODS)
+      .optional()
+      .describe('Leave out to compare every method this provider offers.'),
+    country: shippingCountry,
+    variant_ids: shippingVariantIds,
+  }),
+  handler: async (input, ctx) => {
+    const { blueprint_id: blueprint, print_provider_id: provider } = input;
+    // Only the four known names can be priced; an undocumented one has no path we know.
+    const methods =
+      input.method === undefined
+        ? (await ctx.catalog.shippingMethods(blueprint, provider, ctx.signal)).filter(
+            isShippingMethod,
+          )
+        : [input.method];
+    const wanted = input.variant_ids === undefined ? undefined : new Set(input.variant_ids);
+
+    const entries = await Promise.all(
+      methods.map(async (method) => {
+        const all = await ctx.catalog.shippingCosts(blueprint, provider, method, ctx.signal);
+        const forVariants =
+          wanted === undefined ? all : all.filter((row) => wanted.has(row.variant_id));
+        const { rows, matched } = matchCountry(forVariants, input.country);
+        const profiles = groupShippingProfiles(rows);
+        return { method, matched, profile_count: profiles.length, profiles };
+      }),
+    );
+
+    return {
+      blueprint_id: blueprint,
+      print_provider_id: provider,
+      country: input.country,
+      methods: entries,
+    };
+  },
+});
+
 /** Every tool of the `catalog` toolset, in the order the drill-down uses them. */
 export const catalogTools: readonly Tool[] = [
   getBlueprintTool,
@@ -210,6 +321,8 @@ export const catalogTools: readonly Tool[] = [
   getShippingInfoTool,
   listPrintProvidersTool,
   getPrintProviderTool,
+  listShippingMethodsTool,
+  getShippingCostsTool,
 ];
 
 /** Where the provider is, without the street address the model has no use for. */
@@ -241,4 +354,31 @@ function optionValues(variants: readonly Variant[]): Record<string, string[]> {
     }
   }
   return values;
+}
+
+const REST_OF_THE_WORLD = 'REST_OF_THE_WORLD';
+
+/** How a country filter matched: not at all, by name, or through the catch-all rate. */
+type CountryMatch = 'country' | 'rest_of_the_world' | 'none';
+
+/**
+ * The rows that apply to `country`. Printify lists only the countries it charges a specific rate
+ * for, so a country with no row of its own is shipped at the REST_OF_THE_WORLD rate — returned
+ * here, but never silently: `matched` says which rate this is.
+ */
+function matchCountry(
+  rows: readonly ShippingRow[],
+  country: string | undefined,
+): { rows: readonly ShippingRow[]; matched: CountryMatch | undefined } {
+  if (country === undefined) return { rows, matched: undefined };
+  const named = rows.filter((row) => row.country.toUpperCase() === country);
+  if (named.length > 0) return { rows: named, matched: 'country' };
+  const rest = rows.filter((row) => row.country.toUpperCase() === REST_OF_THE_WORLD);
+  if (rest.length > 0) return { rows: rest, matched: 'rest_of_the_world' };
+  return { rows: [], matched: 'none' };
+}
+
+/** Whether a name Printify listed is one of the four methods this server can price. */
+function isShippingMethod(name: string): name is ShippingMethod {
+  return (SHIPPING_METHODS as readonly string[]).includes(name);
 }
