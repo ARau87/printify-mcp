@@ -123,10 +123,12 @@ issue holds state, so `ToolServices` does not change and neither do `src/cli.ts`
 ```
 src/printify/
   uploads.ts                # new: the record schema and the four requests
+  errors.ts                 # invalidResponseError gains 'an unexpected uploads response'
 src/tools/
   upload-source.ts          # new: url | file_path | base64 -> a request body, or a ToolError
   uploads.ts                # new: the four tools and uploadsTools
   index.ts                  # uploads: uploadsTools
+src/config.ts               # exports the existing expandHome, for file_path's leading ~
 test/printify/
   uploads.test.ts           # new: requests and lenient parsing
 test/tools/
@@ -138,8 +140,10 @@ docs/superpowers/specs/
   2026-09-24-uploads-toolset-design.md
 ```
 
-No new dependencies, and no change to any existing source file except the one line in
-`src/tools/index.ts`.
+No new dependencies. Three existing source files change, by one line each: `src/tools/index.ts`
+files the toolset, `src/printify/errors.ts` gains a literal in `invalidResponseError`'s `problem`
+union, and `src/config.ts` exports the `expandHome` it already has, so `file_path` expands a
+leading `~` by the same rule as `PRINTIFY_UPLOAD_DIRS` rather than a second copy of it.
 
 `src/printify/uploads.ts` sits next to `pagination.ts` and `shops.ts`: it requests, validates and
 returns typed records, and knows nothing about tools. Unlike `createCatalog` and
