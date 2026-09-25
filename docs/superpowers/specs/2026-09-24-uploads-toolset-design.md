@@ -143,7 +143,10 @@ docs/superpowers/specs/
 No new dependencies. Three existing source files change, by one line each: `src/tools/index.ts`
 files the toolset, `src/printify/errors.ts` gains a literal in `invalidResponseError`'s `problem`
 union, and `src/config.ts` exports the `expandHome` it already has, so `file_path` expands a
-leading `~` by the same rule as `PRINTIFY_UPLOAD_DIRS` rather than a second copy of it.
+leading `~` by the same rule as `PRINTIFY_UPLOAD_DIRS` rather than a second copy of it. `config.ts`
+also switches `resolveUploadDir` to `realpathSync.native`, so the directories it stores carry the
+same on-disk case the resolver's native `realpath` also returns; on a case-insensitive macOS volume
+the JS `realpathSync` keeps the typed case, and every upload would be refused.
 
 `src/printify/uploads.ts` sits next to `pagination.ts` and `shops.ts`: it requests, validates and
 returns typed records, and knows nothing about tools. Unlike `createCatalog` and
@@ -223,14 +226,14 @@ is reduced to its basename before it is sent, so a name like `../x.png` cannot t
 
 Each step is its own `ToolError`, in this order:
 
-| #   | Check                                                   | Refusal                                                                  |
-| --- | ------------------------------------------------------- | ------------------------------------------------------------------------ |
-| 1   | `uploadDirs` is not empty                               | local uploads are off, how to switch them on, and that `url` still works |
-| 2   | `~` expanded, then absolute                             | "must be an absolute path"                                               |
-| 3   | `fs.realpath` succeeds                                  | "does not exist", or "cannot be read (EACCES)"                           |
-| 4   | the real path is, or is under, one of `uploadDirs`      | names the allowed directories                                            |
-| 5   | the real path's extension, lowercased, is allowed       | names `.png`, `.jpg`, `.jpeg`                                            |
-| 6   | `stat`: a regular file, not empty, `size` ≤ `MAX_BYTES` | the file's size and "pass `url` instead"                                 |
+| #   | Check                                                   | Refusal                                                                                                                                                                                                                                                                 |
+| --- | ------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | `uploadDirs` is not empty                               | local uploads are off, how to switch them on, and that `url` still works                                                                                                                                                                                                |
+| 2   | `~` expanded, then absolute                             | "must be an absolute path"                                                                                                                                                                                                                                              |
+| 3   | `fs.realpath` succeeds                                  | "does not exist", or "cannot be read (EACCES)"; when `realpath` fails, the path is first resolved lexically, and one that does not fall under an allowed directory gets the step 4 refusal instead, so a model cannot probe whether a file outside the allowlist exists |
+| 4   | the real path is, or is under, one of `uploadDirs`      | names the allowed directories                                                                                                                                                                                                                                           |
+| 5   | the real path's extension, lowercased, is allowed       | names `.png`, `.jpg`, `.jpeg`                                                                                                                                                                                                                                           |
+| 6   | `stat`: a regular file, not empty, `size` ≤ `MAX_BYTES` | the file's size and "pass `url` instead"                                                                                                                                                                                                                                |
 
 Step 2 expands `~` exactly as `PRINTIFY_UPLOAD_DIRS` does, since a model that saw the path in chat
 will pass it as the user wrote it. Step 4 compares against the real path, and `uploadDirs` are
