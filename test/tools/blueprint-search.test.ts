@@ -132,3 +132,32 @@ describe('searchBlueprints matching', () => {
     }
   });
 });
+
+describe('searchBlueprints relaxation', () => {
+  it('falls back to coverage ranking when no blueprint matches every token', () => {
+    const result = searchBlueprints(CATALOGUE, { query: 'unisex heavyweight hoodie' });
+
+    expect(result.matched).toBe('partial');
+    expect(result.unmatchedTerms).toEqual(['heavyweight']);
+    // 49 covers "unisex" (title) and "hoodie" (description) = 2 tokens, score 4. 2, 77 and 6 each
+    // cover one token at score 3, so they follow in title order.
+    expect(ids(result)).toEqual([49, 2, 77, 6]);
+    expect(result.matches[0]?.matchedTerms).toEqual(['unisex', 'hoodie']);
+  });
+
+  it('reports every token when nothing matches at all', () => {
+    const result = searchBlueprints(CATALOGUE, { query: 'galvanised flange' });
+
+    expect(result.matched).toBe('partial');
+    expect(result.unmatchedTerms).toEqual(['galvanised', 'flange']);
+    expect(result.matches).toEqual([]);
+  });
+
+  it('lists only the tokens no blueprint matched, not the ones a row missed', () => {
+    const result = searchBlueprints(CATALOGUE, { query: 'unisex mug' });
+
+    // Both tokens exist in the catalogue, just never together.
+    expect(result.matched).toBe('partial');
+    expect(result.unmatchedTerms).toEqual([]);
+  });
+});
