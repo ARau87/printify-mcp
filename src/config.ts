@@ -168,7 +168,8 @@ function resolveUploadDir(entry: string): { ok: true; dir: string } | { ok: fals
   }
 }
 
-function expandHome(entry: string): string {
+/** A leading `~`, alone or before a separator, means the home directory. `~user` is not expanded. */
+export function expandHome(entry: string): string {
   if (entry === '~') return homedir();
   if (entry.startsWith('~/') || entry.startsWith(`~${sep}`)) return join(homedir(), entry.slice(2));
   return entry;
