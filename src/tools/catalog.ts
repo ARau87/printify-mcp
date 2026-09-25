@@ -77,22 +77,28 @@ export const searchBlueprintsTool = defineTool({
   description:
     'Searches the whole Printify catalog for blueprints (product templates such as t-shirts, ' +
     'hoodies or mugs) and returns their ids. Start here: every other catalog tool needs a ' +
-    'blueprint_id and this is the only tool that finds one. Words match a title, brand, model or ' +
-    'description word by prefix, so prefer short stems: "hood" finds both Hoodie and Hooded, ' +
-    '"hoodie" finds neither. When no blueprint matches every word the closest ones come back ' +
-    'with matched "partial" and unmatched_terms, which say what to drop or shorten. Next, ' +
-    'list_blueprint_providers shows who can print the blueprint you picked.',
+    'blueprint_id and this is the only tool that finds one by name. Words match a title, brand, ' +
+    'model or description word by prefix, so prefer short stems: "hood" finds both Hoodie and ' +
+    'Hooded, "hoodie" finds only Hoodie. When no blueprint matches every word the closest ones ' +
+    'come back with matched "partial" and unmatched_terms, which say what to drop or shorten. ' +
+    'Next, list_blueprint_providers shows who can print the blueprint you picked.',
   annotations: READ_ONLY,
   input: z.strictObject({
     query: z
       .string()
       .optional()
-      .describe('Words to look for. Leave it out to browse the catalog by title.'),
+      .describe(
+        'Words to look for; only the first 12 distinct words are used. Leave it out to browse ' +
+          'the catalog by title.',
+      ),
     brand: z
       .string()
+      .trim()
       .min(1)
       .optional()
-      .describe('Only blueprints of this brand. An exact name, ignoring case and spaces.'),
+      .describe(
+        'Only blueprints of this brand. An exact name, ignoring case and surrounding spaces.',
+      ),
     limit: z
       .number()
       .int()

@@ -545,6 +545,20 @@ describe('search_blueprints', () => {
     expect(api.requests).toEqual([]);
   });
 
+  it('applies the brand filter through the tool, and rejects a blank brand', async () => {
+    const { call, api } = await createTestServer({ routes: SEARCH_ROUTES });
+
+    const data = expectToolData(await call('search_blueprints', { query: 'hood', brand: 'Delta' }));
+
+    expect(data).toMatchObject({ total_matches: 1, matched: 'all', blueprints: [{ id: 2 }] });
+    for (const brand of ['', '   ']) {
+      expect(expectToolError(await call('search_blueprints', { brand }))).toMatchObject({
+        kind: 'validation',
+      });
+    }
+    api.expectRequest('GET', BLUEPRINTS_PATH);
+  });
+
   it('propagates a failure to list the catalogue', async () => {
     const { call } = await createTestServer({
       routes: { [`GET ${BLUEPRINTS_PATH}`]: json(notFoundBody(), 404) },
