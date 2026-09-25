@@ -7,12 +7,16 @@ import {
   type Variant,
   type VariantList,
 } from '../printify/catalog.js';
+import { searchBlueprints } from './blueprint-search.js';
 import { defineTool, type Tool, type ToolAnnotations } from './define.js';
 import { omitKeys } from './shape.js';
 import { groupShippingProfiles } from './shipping-profiles.js';
 
 /** The blueprints `get_print_provider` lists before it truncates. */
 export const PROVIDER_BLUEPRINT_LIMIT = 50;
+
+/** The most blueprints `search_blueprints` returns in one page. */
+export const SEARCH_LIMIT = 50;
 
 const READ_ONLY: ToolAnnotations = {
   readOnlyHint: true,
@@ -24,7 +28,7 @@ const blueprintId = z
   .number()
   .int()
   .positive()
-  .describe('The catalog blueprint id, e.g. from get_print_provider.');
+  .describe('The catalog blueprint id, from search_blueprints.');
 
 const printProviderId = z
   .number()
@@ -66,6 +70,65 @@ const shippingVariantIds = z
     'Only the costs for these variant ids, e.g. from list_variants. Leave it out for every ' +
       'variant; an empty list is an error.',
   );
+
+export const searchBlueprintsTool = defineTool({
+  name: 'search_blueprints',
+  toolset: 'catalog',
+  description:
+    'Searches the whole Printify catalog for blueprints (product templates such as t-shirts, ' +
+    'hoodies or mugs) and returns their ids. Start here: every other catalog tool needs a ' +
+    'blueprint_id and this is the only tool that finds one by name. Words match a title, brand, ' +
+    'model or description word by prefix, so prefer short stems: "hood" finds both Hoodie and ' +
+    'Hooded, "hoodie" finds only Hoodie. When no blueprint matches every word the closest ones ' +
+    'come back with matched "partial" and unmatched_terms, which say what to drop or shorten. ' +
+    'Next, list_blueprint_providers shows who can print the blueprint you picked.',
+  annotations: READ_ONLY,
+  input: z.strictObject({
+    query: z
+      .string()
+      .optional()
+      .describe(
+        'Words to look for; only the first 12 distinct words are used. Leave it out to browse ' +
+          'the catalog by title.',
+      ),
+    brand: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .describe(
+        'Only blueprints of this brand. An exact name, ignoring case and surrounding spaces.',
+      ),
+    limit: z
+      .number()
+      .int()
+      .min(1)
+      .max(SEARCH_LIMIT)
+      .default(20)
+      .describe('How many blueprints to return.'),
+    offset: z.number().int().min(0).default(0).describe('How many blueprints to skip.'),
+  }),
+  handler: async (input, ctx) => {
+    const blueprints = await ctx.catalog.allBlueprints(ctx.signal);
+    const result = searchBlueprints(blueprints, { query: input.query, brand: input.brand });
+    const page = result.matches.slice(input.offset, input.offset + input.limit);
+    return {
+      total_matches: result.matches.length,
+      offset: input.offset,
+      has_more: input.offset + page.length < result.matches.length ? true : undefined,
+      matched: result.matched,
+      unmatched_terms: result.unmatchedTerms.length > 0 ? [...result.unmatchedTerms] : undefined,
+      blueprints: page.map((match) => ({
+        id: match.blueprint.id,
+        title: match.blueprint.title,
+        brand: match.blueprint.brand,
+        model: match.blueprint.model,
+        // On a full match this is the query echoed onto every row.
+        matched_terms: result.matched === 'partial' ? [...match.matchedTerms] : undefined,
+      })),
+    };
+  },
+});
 
 export const getBlueprintTool = defineTool({
   name: 'get_blueprint',
@@ -218,7 +281,8 @@ export const getPrintProviderTool = defineTool({
   description:
     'Gets one print provider: its name, its address, and the blueprints it offers (id, title, ' +
     `brand and model). Only the first ${String(PROVIDER_BLUEPRINT_LIMIT)} blueprints are ` +
-    'listed; blueprint_count gives the total.',
+    'listed and blueprint_count gives the total, so use search_blueprints to find a blueprint ' +
+    'by name rather than paging this list.',
   annotations: READ_ONLY,
   input: z.strictObject({ print_provider_id: printProviderId }),
   handler: async (input, ctx) => {
@@ -315,6 +379,7 @@ export const getShippingCostsTool = defineTool({
 
 /** Every tool of the `catalog` toolset, in the order the drill-down uses them. */
 export const catalogTools: readonly Tool[] = [
+  searchBlueprintsTool,
   getBlueprintTool,
   listBlueprintProvidersTool,
   listVariantsTool,

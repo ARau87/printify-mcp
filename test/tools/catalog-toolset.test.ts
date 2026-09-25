@@ -5,6 +5,7 @@ import {
   PRINT_PROVIDER,
   PRINT_PROVIDERS,
   printProviderWith,
+  SEARCH_BLUEPRINTS,
   SHIPPING,
   VARIANTS,
   VARIANTS_WITH_OUT_OF_STOCK,
@@ -13,7 +14,7 @@ import { notFoundBody } from '../fixtures/errors.js';
 import { expectToolData, expectToolError } from '../support/expect.js';
 import { json, type Routes } from '../support/fake-api.js';
 import { createTestServer } from '../support/harness.js';
-import { PROVIDER_BLUEPRINT_LIMIT } from '../../src/tools/catalog.js';
+import { PROVIDER_BLUEPRINT_LIMIT, SEARCH_LIMIT } from '../../src/tools/catalog.js';
 
 const BLUEPRINT_PATH = '/v1/catalog/blueprints/3.json';
 const BLUEPRINT_PROVIDERS_PATH = '/v1/catalog/blueprints/3/print_providers.json';
@@ -472,5 +473,100 @@ describe('the catalog toolset', () => {
     for (const result of results) {
       expect(JSON.stringify(expectToolData(result))).not.toContain('images');
     }
+  });
+});
+
+const BLUEPRINTS_PATH = '/v1/catalog/blueprints.json';
+const SEARCH_ROUTES: Routes = { [`GET ${BLUEPRINTS_PATH}`]: SEARCH_BLUEPRINTS };
+
+describe('search_blueprints', () => {
+  it('returns ranked matches with the ids the other catalog tools need', async () => {
+    const { call } = await createTestServer({ routes: SEARCH_ROUTES });
+
+    const data = expectToolData(await call('search_blueprints', { query: 'gildan hooded' }));
+
+    expect(data).toEqual({
+      total_matches: 2,
+      offset: 0,
+      matched: 'all',
+      blueprints: [
+        { id: 49, title: 'Unisex Heavy Blend™ Hooded Sweatshirt', brand: 'Gildan', model: '18500' },
+        { id: 77, title: 'Unisex Hooded Zip Sweatshirt', brand: 'Gildan', model: '18600' },
+      ],
+    });
+  });
+
+  it('names the terms that missed when it relaxes, per row and overall', async () => {
+    const { call } = await createTestServer({ routes: SEARCH_ROUTES });
+
+    const data = expectToolData(
+      await call('search_blueprints', { query: 'unisex heavyweight hoodie', limit: 1 }),
+    );
+
+    expect(data).toMatchObject({
+      matched: 'partial',
+      unmatched_terms: ['heavyweight'],
+      blueprints: [{ id: 49, matched_terms: ['unisex', 'hoodie'] }],
+    });
+  });
+
+  it('pages without changing the total, and stops claiming more at the end', async () => {
+    const { call } = await createTestServer({ routes: SEARCH_ROUTES });
+
+    const first = expectToolData(await call('search_blueprints', { limit: 3 }));
+    const last = expectToolData(await call('search_blueprints', { limit: 3, offset: 6 }));
+    const past = expectToolData(await call('search_blueprints', { limit: 3, offset: 99 }));
+
+    expect(first).toMatchObject({ total_matches: 8, offset: 0, has_more: true });
+    expect(first.blueprints).toHaveLength(3);
+    expect(last).toMatchObject({ total_matches: 8, offset: 6 });
+    expect(last).not.toHaveProperty('has_more');
+    expect(past.blueprints).toEqual([]);
+    expect(past).not.toHaveProperty('has_more');
+  });
+
+  it('lists the catalogue once per cache period however often it is searched', async () => {
+    const { call, api } = await createTestServer({ routes: SEARCH_ROUTES });
+
+    await call('search_blueprints', { query: 'hood' });
+    await call('search_blueprints', { query: 'mug' });
+
+    api.expectRequest('GET', BLUEPRINTS_PATH);
+  });
+
+  it('rejects a limit or offset outside the schema before any request', async () => {
+    const { call, api } = await createTestServer({ routes: SEARCH_ROUTES });
+
+    for (const args of [{ limit: SEARCH_LIMIT + 1 }, { limit: 0 }, { offset: -1 }]) {
+      expect(expectToolError(await call('search_blueprints', args))).toMatchObject({
+        kind: 'validation',
+      });
+    }
+    expect(api.requests).toEqual([]);
+  });
+
+  it('applies the brand filter through the tool, and rejects a blank brand', async () => {
+    const { call, api } = await createTestServer({ routes: SEARCH_ROUTES });
+
+    const data = expectToolData(await call('search_blueprints', { query: 'hood', brand: 'Delta' }));
+
+    expect(data).toMatchObject({ total_matches: 1, matched: 'all', blueprints: [{ id: 2 }] });
+    for (const brand of ['', '   ']) {
+      expect(expectToolError(await call('search_blueprints', { brand }))).toMatchObject({
+        kind: 'validation',
+      });
+    }
+    api.expectRequest('GET', BLUEPRINTS_PATH);
+  });
+
+  it('propagates a failure to list the catalogue', async () => {
+    const { call } = await createTestServer({
+      routes: { [`GET ${BLUEPRINTS_PATH}`]: json(notFoundBody(), 404) },
+    });
+
+    expect(expectToolError(await call('search_blueprints', { query: 'hood' }))).toMatchObject({
+      kind: 'http',
+      status: 404,
+    });
   });
 });

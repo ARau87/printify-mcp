@@ -142,3 +142,71 @@ export const SHIPPING = {
     },
   ],
 };
+
+/**
+ * A catalogue wide enough to rank against: two hoodie-like Gildan records, a tee, a mug, one whose
+ * only hit is inside its HTML description, one with a trademark sign, and one missing brand and
+ * model. Deliberately not in id or title order, so a test that passes proves the sort ran.
+ */
+export const SEARCH_BLUEPRINTS = [
+  {
+    id: 49,
+    title: 'Unisex Heavy Blend™ Hooded Sweatshirt',
+    description: '<p>A <strong>classic</strong> pullover hoodie.</p>',
+    brand: 'Gildan',
+    model: '18500',
+    images: [],
+  },
+  {
+    id: 77,
+    title: 'Unisex Hooded Zip Sweatshirt',
+    description: '<p>Full-zip, fleece lined.</p>',
+    brand: 'Gildan',
+    model: '18600',
+    images: [],
+  },
+  {
+    id: 6,
+    title: 'Unisex Jersey Short Sleeve Tee',
+    description: '<p>Soft cotton, retail fit.</p>',
+    brand: 'Bella+Canvas',
+    model: '3001',
+    images: [],
+  },
+  {
+    id: 12,
+    title: 'White Ceramic Mug',
+    description: '<p>Dishwasher safe. 11oz.</p>',
+    brand: 'Generic',
+    model: 'MUG11',
+    images: [],
+  },
+  {
+    id: 31,
+    title: 'Classic Tote Bag',
+    description: '<p>Made from recycled <em>polyester</em> canvas.</p>',
+    brand: 'Liberty Bags',
+    model: '8870',
+    images: [],
+  },
+  {
+    id: 88,
+    title: 'Canteen Steel Bottle',
+    description: '<p>Vacuum insulated.</p>',
+    brand: 'Generic',
+    model: 'BTL20',
+    images: [],
+  },
+  {
+    id: 2,
+    title: 'Adult Fleece Hoodie',
+    description: '<p>Midweight.</p>',
+    brand: 'Delta',
+    model: '97300',
+    images: [],
+  },
+  {
+    id: 64,
+    images: [],
+  },
+];
