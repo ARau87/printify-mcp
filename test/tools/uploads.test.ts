@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { apiErrorBody } from '../fixtures/errors.js';
-import { UPLOAD } from '../fixtures/uploads.js';
+import { UPLOAD, UPLOAD_LISTED, uploadsPage } from '../fixtures/uploads.js';
 import { expectToolData, expectToolError } from '../support/expect.js';
 import { json } from '../support/fake-api.js';
 import { createTestServer } from '../support/harness.js';
@@ -136,5 +136,63 @@ describe('upload_image', () => {
       },
     );
     expect(error.hint).toContain('not a supported image format');
+  });
+});
+
+describe('list_uploads', () => {
+  it('lists the library without preview URLs', async () => {
+    const { call, api } = await createTestServer({
+      routes: { 'GET /v1/uploads.json': uploadsPage([UPLOAD_LISTED]) },
+    });
+    const data = expectToolData(await call('list_uploads'));
+    expect(data).toMatchObject({ page: 1, has_more: false, total: 1 });
+    const [first] = data['uploads'] as Record<string, unknown>[];
+    expect(first).toMatchObject({
+      id: UPLOAD_LISTED.id,
+      file_name: UPLOAD_LISTED.file_name,
+      width: UPLOAD_LISTED.width,
+      height: UPLOAD_LISTED.height,
+    });
+    expect(first).not.toHaveProperty('preview_url');
+    api.expectRequest('GET', '/v1/uploads.json');
+  });
+
+  it('adds the preview URLs when asked', async () => {
+    const { call } = await createTestServer({
+      routes: { 'GET /v1/uploads.json': uploadsPage([UPLOAD_LISTED]) },
+    });
+    const data = expectToolData(await call('list_uploads', { include_previews: true }));
+    const [first] = data['uploads'] as Record<string, unknown>[];
+    expect(first).toMatchObject({ preview_url: UPLOAD_LISTED.preview_url });
+  });
+
+  it('passes page and limit on, and reports more pages', async () => {
+    const { call, api } = await createTestServer({
+      routes: { 'GET /v1/uploads.json': uploadsPage([UPLOAD_LISTED], { last_page: 4, total: 31 }) },
+    });
+    const data = expectToolData(await call('list_uploads', { page: 1, limit: 10 }));
+    expect(data).toMatchObject({ has_more: true, last_page: 4, total: 31 });
+    expect(api.expectRequest('GET', '/v1/uploads.json').query).toEqual({ page: '1', limit: '10' });
+  });
+
+  it('rejects a limit above the documented maximum', async () => {
+    const { call } = await createTestServer();
+    expectToolError(await call('list_uploads', { limit: 101 }), { kind: 'validation' });
+  });
+});
+
+describe('get_upload', () => {
+  it('gets one image with its preview URL', async () => {
+    const { call, api } = await createTestServer({
+      routes: { [`GET /v1/uploads/${UPLOAD.id}.json`]: UPLOAD },
+    });
+    expect(expectToolData(await call('get_upload', { image_id: UPLOAD.id }))).toEqual(UPLOAD);
+    api.expectRequest('GET', `/v1/uploads/${UPLOAD.id}.json`);
+  });
+
+  it('rejects an empty image_id before any request', async () => {
+    const { call, api } = await createTestServer();
+    expectToolError(await call('get_upload', { image_id: '' }), { kind: 'validation' });
+    expect(api.requests).toHaveLength(0);
   });
 });
