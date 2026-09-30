@@ -477,3 +477,58 @@ describe('update_product', () => {
     expect(error.hint).toContain('resolution is too low');
   });
 });
+
+describe('delete_product', () => {
+  it('is turned off without PRINTIFY_ENABLE_DESTRUCTIVE, and the instructions say so', async () => {
+    const { mcp, selection } = await createTestServer();
+    const names = (await mcp.listTools()).tools.map((tool) => tool.name);
+    expect(names).toContain('update_product');
+    expect(names).not.toContain('delete_product');
+    expect(selection.skipped.map(({ tool, reason }) => [tool.name, reason])).toContainEqual([
+      'delete_product',
+      'destructive',
+    ]);
+    expect(mcp.getInstructions()).toMatch(
+      /Irreversible tools \(.*delete_product.*\): set PRINTIFY_ENABLE_DESTRUCTIVE=true\./,
+    );
+  });
+
+  it('deletes a product when the flag is on', async () => {
+    const { call, api } = await createTestServer({
+      env: { PRINTIFY_ENABLE_DESTRUCTIVE: 'true' },
+      routes: { [`DELETE ${PRODUCT_PATH}`]: json({}) },
+    });
+    expect(expectToolData(await call('delete_product', ID))).toEqual({
+      product_id: PRODUCT.id,
+      deleted: true,
+    });
+    api.expectRequest('DELETE', PRODUCT_PATH);
+  });
+
+  it('is annotated as destructive rather than read-only, and the tools list ends with it', async () => {
+    const { mcp } = await createTestServer({ env: { PRINTIFY_ENABLE_DESTRUCTIVE: 'true' } });
+    const tools = (await mcp.listTools()).tools;
+    const tool = tools.find(({ name }) => name === 'delete_product');
+    expect(tool?.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true });
+    const products = tools
+      .map(({ name }) => name)
+      .filter((name) =>
+        [
+          'list_products',
+          'get_product',
+          'get_product_gpsr',
+          'create_product',
+          'update_product',
+          'delete_product',
+        ].includes(name),
+      );
+    expect(products).toEqual([
+      'list_products',
+      'get_product',
+      'get_product_gpsr',
+      'create_product',
+      'update_product',
+      'delete_product',
+    ]);
+  });
+});

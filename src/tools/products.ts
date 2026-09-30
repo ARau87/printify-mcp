@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { PAGE_LIMITS } from '../printify/pagination.js';
 import {
   createProduct,
+  deleteProduct,
   getProduct,
   getProductGpsr,
   listProducts,
@@ -423,6 +424,24 @@ export const updateProductTool = defineTool({
   },
 });
 
+export const deleteProductTool = defineTool({
+  name: 'delete_product',
+  toolset: 'products',
+  gate: 'destructive',
+  description:
+    "Deletes a product from the shop. This cannot be undone. Confirm the product's id and title " +
+    'with the user first, e.g. from get_product. If the call fails with a timeout or a 404, ' +
+    'check with get_product before calling it again rather than assuming nothing happened: a ' +
+    'retried delete can succeed and still report 404.',
+  annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true },
+  input: z.strictObject({ ...shopIdInput, product_id: productId }),
+  handler: async (input, ctx) => {
+    const shopId = await resolveShopId(input, ctx);
+    await deleteProduct(ctx.client, shopId, input.product_id, ctx.signal);
+    return { product_id: input.product_id, deleted: true };
+  },
+});
+
 /** Every tool of the `products` toolset, in the order a session uses them. */
 export const productsTools: readonly Tool[] = [
   listProductsTool,
@@ -430,4 +449,5 @@ export const productsTools: readonly Tool[] = [
   getProductGpsrTool,
   createProductTool,
   updateProductTool,
+  deleteProductTool,
 ];
