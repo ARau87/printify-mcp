@@ -1,6 +1,7 @@
 import { TOOLSETS, type Toolset } from '../toolsets.js';
 import { catalogTools } from './catalog.js';
 import type { Tool } from './define.js';
+import { productsTools } from './products.js';
 import { shopsTools } from './shops.js';
 import { uploadsTools } from './uploads.js';
 
@@ -12,7 +13,7 @@ export const TOOLS_BY_TOOLSET: Readonly<Record<Toolset, readonly Tool[]>> = {
   shops: shopsTools,
   catalog: catalogTools,
   uploads: uploadsTools,
-  products: [],
+  products: productsTools,
   publishing: [],
   personalization: [],
   orders: [],
