@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
+import { apiErrorBody } from '../fixtures/errors.js';
 import { GPSR_SECTIONS, PRODUCT, productsPage } from '../fixtures/products.js';
 import { SHOP } from '../fixtures/shops.js';
 import { expectToolData, expectToolError } from '../support/expect.js';
+import { json } from '../support/fake-api.js';
 import { createTestServer } from '../support/harness.js';
 
 const SHOP_ID = SHOP.id;
@@ -172,5 +174,135 @@ describe('get_product_gpsr', () => {
       sections: GPSR_SECTIONS,
     });
     api.expectRequest('GET', GPSR_PATH);
+  });
+});
+
+const NEW_PRODUCT = {
+  title: 'Product',
+  description: 'Good product',
+  blueprint_id: 384,
+  print_provider_id: 1,
+  variants: [
+    { id: 45740, price: 400, is_enabled: true, is_default: true },
+    { id: 45742, price: 400, is_enabled: false },
+  ],
+  print_areas: [
+    {
+      variant_ids: [45740, 45742],
+      placeholders: [
+        {
+          position: 'front',
+          images: [{ id: '5d15ca551163cde90d7b2203', x: 0.5, y: 0.5, scale: 1, angle: 0 }],
+        },
+      ],
+    },
+  ],
+  tags: ['Tee'],
+  print_details: { print_on_side: 'regular' },
+  is_printify_express_enabled: false,
+  sales_channel_properties: { free_shipping: false },
+};
+
+describe('create_product', () => {
+  it('posts the body as given and returns the summary', async () => {
+    const { call, api } = await createTestServer({
+      routes: { [`POST ${PRODUCTS_PATH}`]: PRODUCT },
+    });
+    const data = expectToolData(await call('create_product', { shop_id: SHOP_ID, ...NEW_PRODUCT }));
+    expect(data).toMatchObject({ id: PRODUCT.id, title: PRODUCT.title, variant_count: 4 });
+    expect(data).not.toHaveProperty('views');
+    expect(api.expectRequest('POST', PRODUCTS_PATH).body).toEqual(NEW_PRODUCT);
+  });
+
+  it('rejects a missing required field before any request', async () => {
+    const { call, api } = await createTestServer();
+    const { variants, ...withoutVariants } = NEW_PRODUCT;
+    expect(variants).toHaveLength(2);
+    expectToolError(await call('create_product', { shop_id: SHOP_ID, ...withoutVariants }), {
+      kind: 'validation',
+    });
+    expect(api.requests).toHaveLength(0);
+  });
+
+  it('rejects empty variants and empty print_areas', async () => {
+    const { call, api } = await createTestServer();
+    expectToolError(
+      await call('create_product', { shop_id: SHOP_ID, ...NEW_PRODUCT, variants: [] }),
+      {
+        kind: 'validation',
+      },
+    );
+    expectToolError(
+      await call('create_product', { shop_id: SHOP_ID, ...NEW_PRODUCT, print_areas: [] }),
+      { kind: 'validation' },
+    );
+    expect(api.requests).toHaveLength(0);
+  });
+
+  it('rejects a bad image placement, a placeholder without a position and an unknown key', async () => {
+    const { call, api } = await createTestServer();
+    const withImage = (image: Record<string, unknown>) => ({
+      shop_id: SHOP_ID,
+      ...NEW_PRODUCT,
+      print_areas: [
+        { variant_ids: [45740], placeholders: [{ position: 'front', images: [image] }] },
+      ],
+    });
+    const good = { id: 'img', x: 0.5, y: 0.5, scale: 1, angle: 0 };
+    for (const bad of [
+      { ...good, x: 1.5 },
+      { ...good, y: -0.1 },
+      { ...good, scale: 0 },
+      { ...good, angle: 361 },
+      { ...good, angle: 1.5 },
+      { ...good, src: 'https://example.com/a.png' },
+    ]) {
+      expectToolError(await call('create_product', withImage(bad)), { kind: 'validation' });
+    }
+    expectToolError(
+      await call('create_product', {
+        shop_id: SHOP_ID,
+        ...NEW_PRODUCT,
+        print_areas: [{ variant_ids: [45740], placeholders: [{ images: [good] }] }],
+      }),
+      { kind: 'validation' },
+    );
+    expectToolError(
+      await call('create_product', {
+        shop_id: SHOP_ID,
+        ...NEW_PRODUCT,
+        print_areas: [{ variant_ids: [], placeholders: [{ position: 'front', images: [good] }] }],
+      }),
+      { kind: 'validation' },
+    );
+    expectToolError(
+      await call('create_product', {
+        shop_id: SHOP_ID,
+        ...NEW_PRODUCT,
+        variants: [{ id: 45740, price: 400, is_enable: true }],
+      }),
+      { kind: 'validation' },
+    );
+    expect(api.requests).toHaveLength(0);
+  });
+
+  it("passes Printify's low-quality image error back with its hint", async () => {
+    const body = apiErrorBody({
+      code: 8203,
+      message: 'Validation failed.',
+      reason: 'Image has low quality',
+    });
+    const { call } = await createTestServer({
+      routes: { [`POST ${PRODUCTS_PATH}`]: json(body, 400) },
+    });
+    const error = expectToolError(
+      await call('create_product', { shop_id: SHOP_ID, ...NEW_PRODUCT }),
+      {
+        kind: 'http',
+        status: 400,
+        code: 8203,
+      },
+    );
+    expect(error.hint).toContain('resolution is too low');
   });
 });

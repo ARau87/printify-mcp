@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { PAGE_LIMITS } from '../printify/pagination.js';
-import { getProduct, getProductGpsr, listProducts } from '../printify/products.js';
+import { createProduct, getProduct, getProductGpsr, listProducts } from '../printify/products.js';
 import { defineTool, type Tool, type ToolAnnotations } from './define.js';
 import { productRow, summarizeProduct } from './product-summary.js';
 import { resolveShopId, shopIdInput } from './shop-id.js';
@@ -17,6 +17,152 @@ const productId = z
   .string()
   .regex(/^[A-Za-z0-9]+$/, 'product_id must be letters and digits')
   .describe('The product id, e.g. from list_products.');
+
+const titleInput = z.string().min(1).describe('The product name.');
+const descriptionInput = z
+  .string()
+  .describe('The product description. HTML is allowed for compatible sales channels.');
+
+const variantId = z.number().int().positive();
+const priceInput = z.number().int().min(0).describe('The price in cents, e.g. 2499 for 24.99.');
+
+/** The writable variant fields besides `price`, whose optionality differs between the tools. */
+const variantFields = {
+  id: variantId.describe('The variant id, from list_variants.'),
+  is_enabled: z.boolean().optional().describe('Whether the variant is offered for sale.'),
+  is_default: z
+    .boolean()
+    .optional()
+    .describe('The default variant gives the product its title image. Only one can be default.'),
+  sku: z
+    .string()
+    .optional()
+    .describe('A SKU of your own. Printify generates one when it is left out.'),
+};
+
+const patternInput = z.strictObject({
+  spacing_x: z
+    .number()
+    .describe(
+      'Horizontal spacing relative to the image width: 1 is no gap, 0.5 repeats every half width.',
+    ),
+  spacing_y: z.number().describe('Vertical spacing relative to the image height, like spacing_x.'),
+  angle: z
+    .number()
+    .optional()
+    .describe('The axis the pattern repeats along, in degrees, -45 to 45.'),
+  offset: z
+    .number()
+    .optional()
+    .describe('The offset between rows, -1 to 1; 0.5 makes a brick pattern.'),
+  scale: z.number().optional().describe('The scale of each repeat.'),
+});
+
+const imageInput = z.strictObject({
+  id: z.string().min(1).describe('An image id from upload_image or list_uploads.'),
+  x: z
+    .number()
+    .min(0)
+    .max(1)
+    .describe("The image centre's horizontal position, 0–1 from the left; 0.5 is the middle."),
+  y: z
+    .number()
+    .min(0)
+    .max(1)
+    .describe("The image centre's vertical position, 0–1 from the top; 0.5 is the middle."),
+  scale: z
+    .number()
+    .positive()
+    .describe('The image width divided by the placeholder width; 1 fills the print area.'),
+  angle: z.number().int().min(-360).max(360).describe('Rotation in degrees; 0 is upright.'),
+  pattern: patternInput.optional().describe('Repeat the image as a pattern.'),
+});
+
+const placeholderInput = z.strictObject({
+  position: z
+    .string()
+    .min(1)
+    .describe('A position from list_variants, e.g. front. It selects the decoration method.'),
+  images: z.array(imageInput).describe('The images to print at this position, in stacking order.'),
+});
+
+const printAreaInput = z.strictObject({
+  variant_ids: z.array(variantId).min(1).describe('The variants this print area applies to.'),
+  placeholders: z.array(placeholderInput).min(1),
+  background: z.string().optional().describe('A background colour as a hex code, e.g. #ffffff.'),
+});
+
+const printDetailsInput = z.strictObject({
+  print_on_side: z
+    .enum(['regular', 'mirror', 'off'])
+    .optional()
+    .describe(
+      'For canvases: regular extends the print to the sides, mirror mirrors it, off leaves them blank.',
+    ),
+  separator_type: z.string().optional().describe('For clocks: Numbers, Lines or None.'),
+  separator_color: z.string().optional().describe('For clocks: a hex colour code.'),
+});
+
+const externalInput = z
+  .array(
+    z.strictObject({
+      id: z.string().optional(),
+      handle: z.string().optional(),
+      shipping_template_id: z
+        .string()
+        .optional()
+        .describe('An Etsy or Amazon shipping template id.'),
+    }),
+  )
+  .describe('The sales-channel reference. Only shipping_template_id is normally set by hand.');
+
+/** The product fields both tools accept, all optional. */
+const optionalProductFields = {
+  tags: z.array(z.string()).optional().describe('Tags, published to the sales channel.'),
+  safety_information: z
+    .string()
+    .optional()
+    .describe(
+      'GPSR and care information; HTML is allowed. get_product_gpsr shows how Printify splits it.',
+    ),
+  print_details: printDetailsInput.optional(),
+  external: externalInput.optional(),
+  is_printify_express_enabled: z
+    .boolean()
+    .optional()
+    .describe('Enable Printify Express delivery. Only an eligible product accepts it.'),
+  sales_channel_properties: z
+    .record(z.string(), z.unknown())
+    .optional()
+    .describe('Sales-channel specific settings, passed through as given.'),
+};
+
+const CREATE_FIELDS = [
+  'title',
+  'description',
+  'blueprint_id',
+  'print_provider_id',
+  'variants',
+  'print_areas',
+  'tags',
+  'safety_information',
+  'print_details',
+  'external',
+  'is_printify_express_enabled',
+  'sales_channel_properties',
+] as const;
+
+/** The given fields of `input`, as the request body. An absent field is left out, so Printify keeps it. */
+function pickFields(
+  input: Record<string, unknown>,
+  fields: readonly string[],
+): Record<string, unknown> {
+  const body: Record<string, unknown> = {};
+  for (const field of fields) {
+    if (input[field] !== undefined) body[field] = input[field];
+  }
+  return body;
+}
 
 export const listProductsTool = defineTool({
   name: 'list_products',
@@ -101,9 +247,53 @@ export const getProductGpsrTool = defineTool({
   },
 });
 
+export const createProductTool = defineTool({
+  name: 'create_product',
+  toolset: 'products',
+  description:
+    'Creates a product from a catalog blueprint and print provider (from search_blueprints and ' +
+    'list_blueprint_providers), with the variants to offer (ids from list_variants, prices in ' +
+    'cents) and the artwork to print. print_areas maps variant ids to placeholders: each has a ' +
+    'position from list_variants and the images to print there, by image id from upload_image ' +
+    "or list_uploads. x and y place the image's centre, 0–1 from the top-left with 0.5/0.5 the " +
+    'centre of the print area; scale is the image width divided by the placeholder width, 1 ' +
+    'fills it; angle rotates in degrees. Only one variant can be is_default; it gives the ' +
+    'product its title image. Printify renders the mock-ups during the call, so it can take a ' +
+    "while. Returns the new product's summary, including its id for update_product.",
+  annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+  input: z.strictObject({
+    ...shopIdInput,
+    title: titleInput,
+    description: descriptionInput,
+    blueprint_id: z
+      .number()
+      .int()
+      .positive()
+      .describe('The catalog blueprint id, from search_blueprints.'),
+    print_provider_id: z
+      .number()
+      .int()
+      .positive()
+      .describe('The print provider id, from list_blueprint_providers.'),
+    variants: z
+      .array(z.strictObject({ ...variantFields, price: priceInput }))
+      .min(1)
+      .describe('The variants to offer, each with its price. Disabled ones are kept but not sold.'),
+    print_areas: z.array(printAreaInput).min(1),
+    ...optionalProductFields,
+  }),
+  handler: async (input, ctx) => {
+    const shopId = await resolveShopId(input, ctx);
+    const body = pickFields(input, CREATE_FIELDS);
+    const created = await createProduct(ctx.client, shopId, body, ctx.signal);
+    return { ...summarizeProduct(created) };
+  },
+});
+
 /** Every tool of the `products` toolset, in the order a session uses them. */
 export const productsTools: readonly Tool[] = [
   listProductsTool,
   getProductTool,
   getProductGpsrTool,
+  createProductTool,
 ];
