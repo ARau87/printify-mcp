@@ -2,7 +2,7 @@
 
 - **Issue:** [#19 create_product_from_image workflow tool](https://github.com/ARau87/printify-mcp/issues/19)
 - **Date:** 2026-09-30
-- **Status:** approved in conversation; awaiting review of this document
+- **Status:** approved
 - **Depends on:** #11 (products toolset) — the plan is written only after #11 has merged
 
 ## Goal
