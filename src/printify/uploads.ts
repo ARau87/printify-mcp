@@ -3,21 +3,13 @@ import type { PrintifyClient } from './client.js';
 import { invalidResponseError, type Route } from './errors.js';
 import { fetchPage } from './pagination.js';
 import { apiPath } from './path.js';
+import { lenient } from './schema.js';
 
 /**
  * Uploads get longer than the client's 30 s default: 25 MiB of base64 is ~33 MB of JSON to send,
  * and an upload by URL waits for Printify to download the URL itself.
  */
 export const UPLOAD_TIMEOUT_MS = 120_000;
-
-/** A field Printify may send as null, as the wrong type, or not at all. */
-function lenient<T>(schema: z.ZodType<T>) {
-  return schema
-    .nullable()
-    .catch(null)
-    .transform((value) => value ?? undefined)
-    .optional();
-}
 
 // openapi.json marks no field as required. `id` and `file_name` are required here anyway: a record
 // without them cannot be acted on, and silently returning one would only move the failure later.
