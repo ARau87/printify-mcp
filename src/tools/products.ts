@@ -1,7 +1,14 @@
 import { z } from 'zod';
 import { PAGE_LIMITS } from '../printify/pagination.js';
-import { createProduct, getProduct, getProductGpsr, listProducts } from '../printify/products.js';
-import { defineTool, type Tool, type ToolAnnotations } from './define.js';
+import {
+  createProduct,
+  getProduct,
+  getProductGpsr,
+  listProducts,
+  updateProduct,
+} from '../printify/products.js';
+import { defineTool, ToolError, type Tool, type ToolAnnotations } from './define.js';
+import { assertUnlocked, mergeVariants, type VariantPatch } from './product-update.js';
 import { productRow, summarizeProduct } from './product-summary.js';
 import { resolveShopId, shopIdInput } from './shop-id.js';
 
@@ -152,6 +159,61 @@ const CREATE_FIELDS = [
   'sales_channel_properties',
 ] as const;
 
+const UPDATE_FIELDS = [
+  'title',
+  'description',
+  'tags',
+  'safety_information',
+  'variants',
+  'print_areas',
+  'print_details',
+  'external',
+  'is_printify_express_enabled',
+  'sales_channel_properties',
+] as const;
+
+const REPLACE_HINT =
+  'Pass replace_variants: true only with the complete variant list, every entry with its price, ' +
+  'and print_areas that cover any new variant ids.';
+const UNKNOWN_VARIANT_HINT =
+  'Use list_variants for the ids this blueprint and print provider offer. To add or remove ' +
+  'variants, pass replace_variants: true with the complete list, and print_areas that cover the ' +
+  'new ids.';
+
+/** The refusals that need no request: they are about the input alone. */
+function checkVariantPatches(
+  variants: readonly VariantPatch[] | undefined,
+  replace: boolean,
+): void {
+  if (variants === undefined) {
+    if (replace) {
+      throw new ToolError(
+        'replace_variants needs variants: the complete list to set.',
+        REPLACE_HINT,
+      );
+    }
+    return;
+  }
+  const ids = variants.map((variant) => variant.id);
+  const duplicates = [...new Set(ids.filter((id, index) => ids.indexOf(id) !== index))];
+  if (duplicates.length > 0) {
+    throw new ToolError(
+      `variants lists ${duplicates.map(String).join(', ')} more than once.`,
+      'Give each variant id once.',
+    );
+  }
+  if (replace) {
+    const unpriced = variants.filter((variant) => variant.price === undefined);
+    if (unpriced.length > 0) {
+      throw new ToolError(
+        'With replace_variants every variant needs a price; ' +
+          `${unpriced.map((variant) => String(variant.id)).join(', ')} have none.`,
+        REPLACE_HINT,
+      );
+    }
+  }
+}
+
 /** The given fields of `input`, as the request body. An absent field is left out, so Printify keeps it. */
 function pickFields(
   input: Record<string, unknown>,
@@ -290,10 +352,82 @@ export const createProductTool = defineTool({
   },
 });
 
+export const updateProductTool = defineTool({
+  name: 'update_product',
+  toolset: 'products',
+  description:
+    'Updates a product. Any of title, description, tags, safety_information, variants, ' +
+    'print_areas, print_details, external, is_printify_express_enabled and ' +
+    'sales_channel_properties can be given; fields left out keep their value. variants are ' +
+    "merged by id into the product's current variants: give only the variants to change, with " +
+    'only the fields to change (price in cents, is_enabled, is_default, sku). The tool fetches ' +
+    'the product and sends the complete list, because Printify removes every variant missing ' +
+    'from an update. Setting is_default on one variant unsets it on the others. A variant id ' +
+    'the product does not have is refused; to add or remove variants, pass ' +
+    'replace_variants: true with the complete list (every entry with a price) and print_areas ' +
+    'that cover the new ids. print_areas, when given, replace all print areas, text layers ' +
+    'included. A product that is locked for publishing is refused before anything is sent. ' +
+    "Returns the updated product's summary.",
+  annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+  input: z.strictObject({
+    ...shopIdInput,
+    product_id: productId,
+    title: titleInput.optional(),
+    description: descriptionInput.optional(),
+    variants: z
+      .array(z.strictObject({ ...variantFields, price: priceInput.optional() }))
+      .min(1)
+      .optional()
+      .describe('The variants to change, by id, with only the fields to change.'),
+    print_areas: z
+      .array(printAreaInput)
+      .min(1)
+      .optional()
+      .describe('Replaces every print area of the product.'),
+    ...optionalProductFields,
+    replace_variants: z
+      .boolean()
+      .default(false)
+      .describe(
+        'Send variants exactly as given instead of merging them. Needs the complete list, ' +
+          'each with a price; every variant not listed is removed.',
+      ),
+  }),
+  handler: async (input, ctx) => {
+    const shopId = await resolveShopId(input, ctx);
+    const body = pickFields(input, UPDATE_FIELDS);
+    const sentFields = Object.keys(body);
+    if (sentFields.length === 0) {
+      throw new ToolError(
+        'Nothing to update: no field was given.',
+        `Give at least one of ${UPDATE_FIELDS.join(', ')}.`,
+      );
+    }
+    checkVariantPatches(input.variants, input.replace_variants);
+
+    const current = await getProduct(ctx.client, shopId, input.product_id, ctx.signal);
+    assertUnlocked(current);
+    if (input.variants !== undefined && !input.replace_variants) {
+      const merged = mergeVariants(current.variants, input.variants);
+      if (!merged.ok) {
+        throw new ToolError(
+          `Product ${current.id} has no variant ${merged.unknownIds.map(String).join(', ')}.`,
+          UNKNOWN_VARIANT_HINT,
+        );
+      }
+      body['variants'] = merged.variants;
+    }
+
+    const updated = await updateProduct(ctx.client, shopId, input.product_id, body, ctx.signal);
+    return { ...summarizeProduct(updated), sent_fields: sentFields };
+  },
+});
+
 /** Every tool of the `products` toolset, in the order a session uses them. */
 export const productsTools: readonly Tool[] = [
   listProductsTool,
   getProductTool,
   getProductGpsrTool,
   createProductTool,
+  updateProductTool,
 ];

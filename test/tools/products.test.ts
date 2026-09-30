@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { apiErrorBody } from '../fixtures/errors.js';
-import { GPSR_SECTIONS, PRODUCT, productsPage } from '../fixtures/products.js';
+import {
+  GPSR_SECTIONS,
+  PRODUCT,
+  lockedProduct,
+  product,
+  productsPage,
+} from '../fixtures/products.js';
 import { SHOP } from '../fixtures/shops.js';
 import { expectToolData, expectToolError } from '../support/expect.js';
 import { json } from '../support/fake-api.js';
@@ -303,6 +309,171 @@ describe('create_product', () => {
         code: 8203,
       },
     );
+    expect(error.hint).toContain('resolution is too low');
+  });
+});
+
+describe('update_product', () => {
+  const routes = (updated: object = product({ title: 'Renamed' })) => ({
+    [`GET ${PRODUCT_PATH}`]: PRODUCT,
+    [`PUT ${PRODUCT_PATH}`]: updated,
+  });
+  /** The writable fields of a fixture variant, as the merge sends them. */
+  const sent = (index: number, overrides: Record<string, unknown> = {}) => {
+    const variant = PRODUCT.variants[index];
+    if (variant === undefined) throw new Error(`no fixture variant ${String(index)}`);
+    const { id, price, is_enabled, is_default, sku } = variant;
+    return { id, price, is_enabled, is_default, sku, ...overrides };
+  };
+
+  it('fetches, then puts a title-only update and returns the summary', async () => {
+    const { call, api } = await createTestServer({ routes: routes() });
+    const data = expectToolData(await call('update_product', { ...ID, title: 'Renamed' }));
+    expect(data).toMatchObject({ id: PRODUCT.id, title: 'Renamed', sent_fields: ['title'] });
+    expect(data).not.toHaveProperty('views');
+    api.expectRequest('GET', PRODUCT_PATH);
+    expect(api.expectRequest('PUT', PRODUCT_PATH).body).toEqual({ title: 'Renamed' });
+  });
+
+  it('sends the complete variant list for a partial change (the XL example)', async () => {
+    const { call, api } = await createTestServer({ routes: routes() });
+    const data = expectToolData(
+      await call('update_product', {
+        ...ID,
+        variants: [
+          { id: 17889, price: 2499 },
+          { id: 17890, price: 2499 },
+        ],
+      }),
+    );
+    expect(data['sent_fields']).toEqual(['variants']);
+    expect(api.expectRequest('PUT', PRODUCT_PATH).body).toEqual({
+      variants: [sent(0), sent(1), sent(2, { price: 2499 }), sent(3, { price: 2499 })],
+    });
+  });
+
+  it('unsets the other defaults when one variant becomes the default', async () => {
+    const { call, api } = await createTestServer({ routes: routes() });
+    expectToolData(
+      await call('update_product', { ...ID, variants: [{ id: 17890, is_default: true }] }),
+    );
+    const body = api.expectRequest('PUT', PRODUCT_PATH).body as {
+      variants: { is_default: boolean }[];
+    };
+    expect(body.variants.map((variant) => variant.is_default)).toEqual([false, false, false, true]);
+  });
+
+  it('refuses a variant id the product does not have, after the GET only', async () => {
+    const { call, api } = await createTestServer({ routes: routes() });
+    const error = expectToolError(
+      await call('update_product', {
+        ...ID,
+        variants: [
+          { id: 17889, price: 1 },
+          { id: 99, price: 1 },
+        ],
+      }),
+      { kind: 'tool' },
+    );
+    expect(error.message).toBe(`Product ${PRODUCT.id} has no variant 99.`);
+    expect(error.hint).toContain('replace_variants');
+    expect(api.requests.map((request) => request.method)).toEqual(['GET']);
+  });
+
+  it('sends the variants as given with replace_variants', async () => {
+    const { call, api } = await createTestServer({ routes: routes() });
+    const variants = [
+      { id: 17887, price: 1200, is_enabled: true },
+      { id: 17891, price: 1300 },
+    ];
+    expectToolData(await call('update_product', { ...ID, variants, replace_variants: true }));
+    expect(api.expectRequest('PUT', PRODUCT_PATH).body).toEqual({ variants });
+  });
+
+  it('refuses replace_variants without variants, or with a variant lacking a price', async () => {
+    const { call, api } = await createTestServer();
+    const noList = await call('update_product', { ...ID, title: 'x', replace_variants: true });
+    expect(expectToolError(noList, { kind: 'tool' }).message).toContain(
+      'replace_variants needs variants',
+    );
+    const unpriced = await call('update_product', {
+      ...ID,
+      variants: [{ id: 17887, price: 1 }, { id: 17888 }],
+      replace_variants: true,
+    });
+    expect(expectToolError(unpriced, { kind: 'tool' }).message).toContain('17888');
+    expect(api.requests).toHaveLength(0);
+  });
+
+  it('refuses duplicate variant ids, an empty variants list and an empty update', async () => {
+    const { call, api } = await createTestServer();
+    const duplicate = await call('update_product', {
+      ...ID,
+      variants: [
+        { id: 17887, price: 1 },
+        { id: 17887, price: 2 },
+      ],
+    });
+    expect(expectToolError(duplicate, { kind: 'tool' }).message).toContain('17887');
+    expectToolError(await call('update_product', { ...ID, variants: [] }), { kind: 'validation' });
+    const empty = await call('update_product', ID);
+    expect(expectToolError(empty, { kind: 'tool' }).message).toContain('Nothing to update');
+    expect(api.requests).toHaveLength(0);
+  });
+
+  it('refuses a locked product before the PUT', async () => {
+    const { call, api } = await createTestServer({
+      routes: { [`GET ${PRODUCT_PATH}`]: lockedProduct() },
+    });
+    const error = expectToolError(await call('update_product', { ...ID, title: 'x' }), {
+      kind: 'tool',
+    });
+    expect(error.message).toContain('is locked because it is being published');
+    expect(error.hint).toContain('publishing result');
+    expect(api.requests.map((request) => request.method)).toEqual(['GET']);
+  });
+
+  it('refuses to merge into a product whose variants cannot be resent', async () => {
+    const { call, api } = await createTestServer({
+      routes: {
+        [`GET ${PRODUCT_PATH}`]: { ...PRODUCT, variants: [{ id: 17887, title: 'no price' }] },
+      },
+    });
+    expectToolError(await call('update_product', { ...ID, variants: [{ id: 17887, price: 1 }] }), {
+      kind: 'invalid_response',
+    });
+    expect(api.requests.map((request) => request.method)).toEqual(['GET']);
+  });
+
+  it('sends print_areas and the other fields as given', async () => {
+    const { call, api } = await createTestServer({ routes: routes() });
+    const print_areas = NEW_PRODUCT.print_areas;
+    expectToolData(
+      await call('update_product', {
+        ...ID,
+        print_areas,
+        tags: ['New'],
+        external: [{ shipping_template_id: 'tpl-1' }],
+      }),
+    );
+    expect(api.expectRequest('PUT', PRODUCT_PATH).body).toEqual({
+      print_areas,
+      tags: ['New'],
+      external: [{ shipping_template_id: 'tpl-1' }],
+    });
+  });
+
+  it("passes Printify's low-quality image error from the PUT back with its hint", async () => {
+    const body = apiErrorBody({
+      code: 8203,
+      message: 'Validation failed.',
+      reason: 'Image has low quality',
+    });
+    const { call } = await createTestServer({ routes: routes(json(body, 400)) });
+    const error = expectToolError(await call('update_product', { ...ID, title: 'x' }), {
+      kind: 'http',
+      code: 8203,
+    });
     expect(error.hint).toContain('resolution is too low');
   });
 });
