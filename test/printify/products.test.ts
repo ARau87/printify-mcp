@@ -94,8 +94,9 @@ describe('getProduct', () => {
 
   it('reports a variant without an id or a price, and a variants that is not a list', async () => {
     const withoutPrice = { ...PRODUCT, variants: [{ id: 1, title: 'no price' }] };
+    const withoutId = { ...PRODUCT, variants: [{ price: 1, title: 'no id' }] };
     const notAList = { ...PRODUCT, variants: 'none' };
-    for (const body of [withoutPrice, notAList]) {
+    for (const body of [withoutPrice, withoutId, notAList]) {
       const { client } = testClient({ [`GET ${PRODUCT_PATH}`]: body });
       const error = await apiError(getProduct(client, SHOP_ID, PRODUCT.id, live()));
       expect(error.kind).toBe('invalid_response');

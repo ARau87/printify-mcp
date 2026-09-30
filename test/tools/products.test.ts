@@ -131,7 +131,6 @@ describe('get_product', () => {
     expect(data['mockups']).toEqual([PRODUCT.images[0]]);
     expect(data).not.toHaveProperty('views');
     expect(data).not.toHaveProperty('options');
-    expect(data).not.toHaveProperty('external');
     const areas = data['print_areas'] as { placeholders: { images: object[] }[] }[];
     expect(areas[0]?.placeholders[0]?.images[0]).toEqual({
       id: '5cb87a8cd490a2ccb256cec4',
@@ -146,12 +145,24 @@ describe('get_product', () => {
     api.expectRequest('GET', PRODUCT_PATH);
   });
 
+  it('keeps id and handle of a published external reference in the summary', async () => {
+    const { call } = await createTestServer({
+      routes: {
+        [`GET ${PRODUCT_PATH}`]: {
+          ...PRODUCT,
+          external: [{ id: 'A1', handle: '/products/tee', shipping_template_id: 'T1' }],
+        },
+      },
+    });
+    const data = expectToolData(await call('get_product', ID));
+    expect(data['external']).toEqual([{ id: 'A1', handle: '/products/tee' }]);
+  });
+
   it('returns the whole product with detail: "full"', async () => {
     const { call } = await createTestServer({ routes: { [`GET ${PRODUCT_PATH}`]: PRODUCT } });
     const data = expectToolData(await call('get_product', { ...ID, detail: 'full' }));
     expect(data).toMatchObject({ views: PRODUCT.views, options: PRODUCT.options });
     expect(data['variants']).toEqual(PRODUCT.variants);
-    expect(data).not.toHaveProperty('external');
   });
 
   it('rejects a product_id with a path separator before any request', async () => {
@@ -331,7 +342,7 @@ describe('update_product', () => {
     const data = expectToolData(await call('update_product', { ...ID, title: 'Renamed' }));
     expect(data).toMatchObject({ id: PRODUCT.id, title: 'Renamed', sent_fields: ['title'] });
     expect(data).not.toHaveProperty('views');
-    api.expectRequest('GET', PRODUCT_PATH);
+    expect(api.requests.map((request) => request.method)).toEqual(['GET', 'PUT']);
     expect(api.expectRequest('PUT', PRODUCT_PATH).body).toEqual({ title: 'Renamed' });
   });
 

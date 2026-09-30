@@ -52,9 +52,13 @@ jobs:
           fi
           grep -q '"name":"printify-mcp"' <<<"$output"
           grep -q '"name":"list_shops"' <<<"$output"
-          ! grep -q '"name":"disconnect_shop"' <<<"$output"
-          ! grep -q '"name":"archive_upload"' <<<"$output"
-          ! grep -q '"name":"delete_product"' <<<"$output"
+          # Gated tools must stay off without their flag. `! grep` would not fail under errexit.
+          for tool in disconnect_shop archive_upload delete_product; do
+            if grep -q "\"name\":\"$tool\"" <<<"$output"; then
+              echo "$tool is registered without its flag" >&2
+              exit 1
+            fi
+          done
           # Every catalog tool reaches a real client over the built artifact. Each toolset adds its
           # own names here; the count is deliberately not asserted, so a new toolset does not fail.
           for tool in search_blueprints get_blueprint list_blueprint_providers list_variants \

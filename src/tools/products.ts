@@ -19,8 +19,8 @@ const READ_ONLY: ToolAnnotations = {
   idempotentHint: true,
 };
 
-// Letters and digits only: Printify ids are hex strings, and anything else would reach apiPath,
-// which throws on a path segment it cannot use.
+// Letters and digits only: Printify ids are hex strings. apiPath URL-encodes anything else, so
+// "../orders" would become a request that cannot succeed; the regex makes it a validation error.
 const productId = z
   .string()
   .regex(/^[A-Za-z0-9]+$/, 'product_id must be letters and digits')
@@ -275,9 +275,9 @@ export const getProductTool = defineTool({
     "Gets one product. The summary (the default) has the product's fields, every variant as a " +
     'compact row (id, title, sku, price and cost in cents, is_enabled, is_default, ' +
     "is_available), its print areas with each image's id and placement, and the default " +
-    'mock-up URLs. detail: "full" returns the whole product as Printify sends it, including ' +
-    'every mock-up, the blank views and the option tables; it is large. A text layer in a print ' +
-    'area is shown but cannot be edited here.',
+    'mock-ups (src, variant_ids, position). detail: "full" returns the whole product as ' +
+    'Printify sends it, including every mock-up, the blank views and the option tables; it is ' +
+    'large. A text layer in a print area is shown but cannot be edited here.',
   annotations: READ_ONLY,
   input: z.strictObject({
     ...shopIdInput,
@@ -363,12 +363,13 @@ export const updateProductTool = defineTool({
     "merged by id into the product's current variants: give only the variants to change, with " +
     'only the fields to change (price in cents, is_enabled, is_default, sku). The tool fetches ' +
     'the product and sends the complete list, because Printify removes every variant missing ' +
-    'from an update. Setting is_default on one variant unsets it on the others. A variant id ' +
-    'the product does not have is refused; to add or remove variants, pass ' +
+    'from an update. When merging, setting is_default on one variant unsets it on the others. ' +
+    'A variant id the product does not have is refused; to add or remove variants, pass ' +
     'replace_variants: true with the complete list (every entry with a price) and print_areas ' +
     'that cover the new ids. print_areas, when given, replace all print areas, text layers ' +
-    'included. A product that is locked for publishing is refused before anything is sent. ' +
-    "Returns the updated product's summary.",
+    'included. Each image takes only id, x, y, scale, angle and pattern; drop the name, width ' +
+    'and height that get_product shows. A product that is locked for publishing is refused ' +
+    "before anything is sent. Returns the updated product's summary.",
   annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
   input: z.strictObject({
     ...shopIdInput,
