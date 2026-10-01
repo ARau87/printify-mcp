@@ -99,3 +99,17 @@ export class ToolError extends Error {
     this.hint = hint;
   }
 }
+
+/**
+ * A failure after the call already changed something, e.g. uploaded images. The registry reports
+ * `cause` as it would on its own and adds the fields of `done`, so the model can reuse the work.
+ */
+export class PartialFailureError extends Error {
+  override readonly name = 'PartialFailureError';
+  readonly done: ToolData;
+
+  constructor(cause: unknown, done: ToolData) {
+    super(cause instanceof Error ? cause.message : String(cause), { cause });
+    this.done = done;
+  }
+}
