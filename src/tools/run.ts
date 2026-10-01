@@ -3,6 +3,7 @@ import type { Logger } from '../log.js';
 import { PrintifyApiError } from '../printify/errors.js';
 import { redactJwts } from '../redact.js';
 import {
+  PartialFailureError,
   ToolError,
   mcpAnnotations,
   type Tool,
@@ -15,7 +16,7 @@ const BUG_HINT =
   'This is a bug in printify-mcp. Please report it at ' +
   'https://github.com/ARau87/printify-mcp/issues with the tool name and this message.';
 
-type ErrorFields = Record<string, string | number | undefined>;
+type ErrorFields = Record<string, unknown>;
 
 /** Registers every tool on `server`. Each call runs through `runTool`. */
 export function registerTools(
@@ -57,6 +58,9 @@ export async function runTool(
 }
 
 function errorFields(tool: Tool, error: unknown, log: Logger): ErrorFields {
+  if (error instanceof PartialFailureError) {
+    return { ...errorFields(tool, error.cause, log), ...error.done };
+  }
   if (error instanceof PrintifyApiError) {
     // message is one redacted line; a network error's cause is never logged.
     log.warn(`${tool.name} failed: ${error.message}`);

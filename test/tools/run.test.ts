@@ -1,7 +1,7 @@
 import type { CallToolResult } from '@modelcontextprotocol/server';
 import { describe, expect, it, vi } from 'vitest';
 import { PrintifyApiError, httpError, timeoutError } from '../../src/printify/errors.js';
-import { ToolError } from '../../src/tools/define.js';
+import { PartialFailureError, ToolError } from '../../src/tools/define.js';
 import { runTool } from '../../src/tools/run.js';
 import { rejection } from '../printify/helpers.js';
 import { fixtureContext, fixtureTool } from './fixtures.js';
@@ -121,6 +121,46 @@ describe('runTool', () => {
         hint: 'Printify did not answer in time. Try again in a moment.',
       },
     });
+  });
+
+  it('reports a PartialFailureError as its cause, plus what was done', async () => {
+    const uploaded = [{ upload_id: 'art-1', file_name: 'sunset.png', positions: ['front'] }];
+    const error = new PartialFailureError(
+      new ToolError(
+        'strict is set and the artwork would print at low resolution.',
+        'Use more pixels.',
+      ),
+      { uploaded },
+    );
+    const { ctx, logged } = fixtureContext();
+    expect(await runTool(failing(error), {}, ctx)).toEqual(
+      errorResult({
+        kind: 'tool',
+        message: 'strict is set and the artwork would print at low resolution.',
+        hint: 'Use more pixels.',
+        uploaded,
+      }),
+    );
+    expect(logged).toEqual([]);
+  });
+
+  it('keeps every field of a PrintifyApiError cause next to what was done', async () => {
+    const uploaded = [{ upload_id: 'art-1', file_name: 'sunset.png', positions: ['front'] }];
+    const cause = timeoutError({ method: 'POST', path: '/v1/shops/12/products.json' }, 30_000);
+    const { ctx, logged } = fixtureContext();
+    const result = await runTool(failing(new PartialFailureError(cause, { uploaded })), {}, ctx);
+    expect(result.structuredContent).toStrictEqual({
+      error: {
+        kind: 'timeout',
+        request: 'POST /v1/shops/12/products.json',
+        message: 'POST /v1/shops/12/products.json timed out after 30000 ms',
+        hint:
+          'Printify did not answer in time. Try again in a moment. The request may still have ' +
+          'gone through, so check before retrying.',
+        uploaded,
+      },
+    });
+    expect(logged).toHaveLength(1);
   });
 
   it('maps a ToolError to kind "tool" and logs nothing', async () => {

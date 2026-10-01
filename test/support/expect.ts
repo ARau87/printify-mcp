@@ -12,6 +12,8 @@ export interface ToolErrorFields {
   request_id?: string;
   retry_after_seconds?: number;
   hint?: string;
+  /** What a workflow tool did before it failed, e.g. the images it uploaded. */
+  uploaded?: unknown;
 }
 
 /**

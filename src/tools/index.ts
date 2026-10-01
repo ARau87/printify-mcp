@@ -4,6 +4,7 @@ import type { Tool } from './define.js';
 import { productsTools } from './products.js';
 import { shopsTools } from './shops.js';
 import { uploadsTools } from './uploads.js';
+import { workflowsTools } from './workflows.js';
 
 /**
  * Each toolset's tools, from `src/tools/<toolset>.ts`. A toolset's issue replaces its `[]` with
@@ -19,7 +20,7 @@ export const TOOLS_BY_TOOLSET: Readonly<Record<Toolset, readonly Tool[]>> = {
   orders: [],
   support: [],
   webhooks: [],
-  workflows: [],
+  workflows: workflowsTools,
 };
 
 /** Every tool the server can offer, in `TOOLSETS` order. */
