@@ -65,7 +65,8 @@ jobs:
             get_shipping_info list_print_providers get_print_provider \
             list_shipping_methods get_shipping_costs \
             upload_image list_uploads get_upload \
-            list_products get_product get_product_gpsr create_product update_product; do
+            list_products get_product get_product_gpsr create_product update_product \
+            create_product_from_image; do
             grep -q "\"name\":\"$tool\"" <<<"$output"
           done
       - name: Check --version

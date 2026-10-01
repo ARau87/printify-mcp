@@ -278,9 +278,10 @@ something differently, #11 wins and this module adapts.
   `get_product` returns them all.
 - **`warnings`** collects resolution warnings, the >5 MB upload warning from
   `resolveUploadSource`, and unknown-size warnings.
-- **`next_step`** says the product is an unpublished draft whose mockups can be reviewed. It
-  names `publish_product` only if a tool of that name is in `ALL_TOOLS`, so it never points at
-  an absent tool and picks up the name once the publishing toolset (#12) lands.
+- **`next_step`** says the product is an unpublished draft whose mockups can be reviewed and
+  changed with `update_product`. It does not name `publish_product`: reading `ALL_TOOLS` from
+  `workflows.ts` would be an import cycle. A test fails once `publish_product` exists, so the
+  publishing toolset (#12) updates this text.
 
 ## Error handling
 
