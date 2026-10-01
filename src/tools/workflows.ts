@@ -8,7 +8,13 @@ import {
   type Tool,
   type ToolContext,
 } from './define.js';
-import { DEFAULT_PLACEMENT, placeImage, resolutionWarning, type Size } from './placement.js';
+import {
+  DEFAULT_PLACEMENT,
+  placeImage,
+  resolutionWarning,
+  type Placement,
+  type Size,
+} from './placement.js';
 import {
   buildProductPayload,
   selectMockups,
@@ -163,7 +169,9 @@ export const createProductFromImageTool = defineTool({
     'every variant in stock), and the price in cents, optionally per size. Warns when an image ' +
     'has fewer pixels than it is printed across; strict refuses instead. If the call fails ' +
     'after uploading, the error lists the images under uploaded: retry with image.upload_id ' +
-    'set to them rather than uploading again. Does not publish.',
+    'set to them rather than uploading again. If the error says the request may still have gone ' +
+    'through, the product may exist: check list_products for it before retrying. Does not ' +
+    'publish.',
   annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
   input: z.strictObject({
     ...shopIdInput,
@@ -231,6 +239,11 @@ export const createProductFromImageTool = defineTool({
     checkPriceSizes(selected, typeof price === 'number' ? undefined : price.by_size);
 
     const slotOf = await resolveImages(input.designs, ctx);
+    // An upload_id's size is already known, so a missing one is refused before any upload.
+    for (const design of input.designs) {
+      const slot = slotOf.get(design.position);
+      if (slot?.reused === true) checkSizeKnown(slot, design.placement ?? DEFAULT_PLACEMENT);
+    }
     const slots = [...new Set(slotOf.values())];
     const warnings = slots.flatMap((slot) => (slot.warning === undefined ? [] : [slot.warning]));
     const uploaded: UploadedImage[] = [];
@@ -380,14 +393,8 @@ function placeDesigns(
         throw new TypeError(`no image or placeholder for ${design.position}`);
       }
       const placement = design.placement ?? DEFAULT_PLACEMENT;
+      checkSizeKnown(slot, placement);
       const size = sizeOf(slot);
-      if (size === undefined && placement.mode !== 'custom') {
-        throw new ToolError(
-          `Printify did not report the pixel size of ${slot.fileName}, so placement mode ` +
-            `"${placement.mode}" cannot be worked out.`,
-          NO_SIZE_HINT,
-        );
-      }
       const placed = placeImage(placeholder, size, placement);
       if (size === undefined) {
         unchecked.add(slot);
@@ -417,6 +424,16 @@ function placeDesigns(
     );
   }
   return areas;
+}
+
+/** Throws when the placement needs the image's pixel size and Printify did not report it. */
+function checkSizeKnown(slot: ImageSlot, placement: Placement): void {
+  if (placement.mode === 'custom' || sizeOf(slot) !== undefined) return;
+  throw new ToolError(
+    `Printify did not report the pixel size of ${slot.fileName}, so placement mode ` +
+      `"${placement.mode}" cannot be worked out.`,
+    NO_SIZE_HINT,
+  );
 }
 
 function sizeOf(slot: ImageSlot): Size | undefined {

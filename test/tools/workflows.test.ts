@@ -309,6 +309,28 @@ describe('create_product_from_image', () => {
     expect(error.hint).toContain('mode: "custom"');
   });
 
+  it('refuses an upload_id without a pixel size before uploading the other images', async () => {
+    const { call, api } = await createTestServer({
+      routes: {
+        ...ROUTES,
+        'GET /v1/uploads/old-logo.json': { ...ART, id: 'old-logo', width: null, height: null },
+      },
+    });
+    const error = expectToolError(
+      await call(TOOL, {
+        ...RED_FRONT,
+        designs: [FRONT, { position: 'back', image: { upload_id: 'old-logo' } }],
+      }),
+      { kind: 'tool' },
+    );
+    expect(error.message).toBe(
+      'Printify did not report the pixel size of sunset.png, so placement mode "contain" ' +
+        'cannot be worked out.',
+    );
+    expect(error).not.toHaveProperty('uploaded');
+    expect(api.requests.filter((request) => request.method === 'POST')).toHaveLength(0);
+  });
+
   it('places custom without a pixel size, and warns that it could not check it', async () => {
     const sizeless = { ...ART, width: null, height: null };
     const { call } = await createTestServer({
@@ -352,6 +374,13 @@ describe('create_product_from_image', () => {
     expect(data['mockups']).toHaveLength(6);
     expect(data['mockup_count']).toBe(8);
     expect(data).not.toHaveProperty('warnings');
+  });
+
+  it('tells the model to look for the product before retrying a create that may have succeeded', async () => {
+    const { mcp } = await createTestServer();
+    const { tools } = await mcp.listTools();
+    const description = tools.find((tool) => tool.name === TOOL)?.description ?? '';
+    expect(description).toContain('check list_products for it before retrying');
   });
 
   it('is a write tool, filed under workflows and registered by default', async () => {

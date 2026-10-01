@@ -17,6 +17,9 @@ export interface PlaceholderGroup {
 
 type FilterOption = 'color' | 'size';
 
+/** The most variants one Printify product can have. */
+export const MAX_VARIANTS = 100;
+
 /**
  * The variants matching the filters, in catalog order. Matching ignores case and surrounding
  * spaces; an omitted filter keeps every value. Throws a `ToolError` listing the valid values for
@@ -40,6 +43,14 @@ export function selectVariants(variants: readonly Variant[], filters: VariantFil
       `No variant in stock has one of the colors ${describe(filters.colors)} in one of the ` +
         `sizes ${describe(filters.sizes)}.`,
       'Not every color comes in every size. Pick other colors or sizes.',
+    );
+  }
+  if (selected.length > MAX_VARIANTS) {
+    throw new ToolError(
+      `${String(selected.length)} variants match, but a Printify product can have at most ` +
+        `${String(MAX_VARIANTS)}.`,
+      'Ask the user which colors or sizes to offer and pass them as variants.colors and ' +
+        'variants.sizes.',
     );
   }
   return selected;
@@ -79,6 +90,21 @@ export function checkPriceSizes(
   bySize: Readonly<Record<string, number>> | undefined,
 ): void {
   if (bySize === undefined) return;
+  const keysBySize = new Map<string, string[]>();
+  for (const key of Object.keys(bySize)) {
+    const same = keysBySize.get(normalise(key));
+    if (same === undefined) keysBySize.set(normalise(key), [key]);
+    else same.push(key);
+  }
+  for (const keys of keysBySize.values()) {
+    const [first] = keys;
+    if (keys.length > 1 && first !== undefined) {
+      throw new ToolError(
+        `price.by_size gives the size ${first.trim().toUpperCase()} twice: ${quoteAll(keys)}.`,
+        'Give each size one price; case does not matter.',
+      );
+    }
+  }
   const sizes = distinctValues(selected, 'size');
   const known = new Set(sizes.map(normalise));
   const unknown = Object.keys(bySize).filter((key) => !known.has(normalise(key)));

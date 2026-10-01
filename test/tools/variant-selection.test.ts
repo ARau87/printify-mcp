@@ -65,6 +65,20 @@ describe('selectVariants', () => {
     );
   });
 
+  it('accepts 100 variants, the most a Printify product can have', () => {
+    const hundred = Array.from({ length: 100 }, (_item, index) =>
+      tee(index, 'Black', String(index)),
+    );
+    expect(selectVariants(hundred, {})).toHaveLength(100);
+  });
+
+  it('refuses more than 100 variants, naming how many matched', () => {
+    const many = Array.from({ length: 101 }, (_item, index) => tee(index, 'Black', String(index)));
+    const error = toolError(() => selectVariants(many, {}));
+    expect(error.message).toBe('101 variants match, but a Printify product can have at most 100.');
+    expect(error.hint).toContain('colors or sizes');
+  });
+
   it('refuses when nothing is in stock', () => {
     expect(toolError(() => selectVariants([], {})).message).toBe(
       'No variant of this blueprint is in stock at this print provider.',
@@ -127,6 +141,13 @@ describe('checkPriceSizes', () => {
     expect(() => {
       checkPriceSizes(TEES, { m: 2799, ' S ': 2499 });
     }).not.toThrow();
+  });
+
+  it('refuses two by_size keys for the same size', () => {
+    const error = toolError(() => {
+      checkPriceSizes(TEES, { m: 2499, M: 2999 });
+    });
+    expect(error.message).toBe('price.by_size gives the size M twice: "m", "M".');
   });
 
   it('accepts no by_size at all', () => {
