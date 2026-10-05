@@ -85,7 +85,8 @@ export function aspectRatio(width: number, height: number): number | undefined {
 }
 
 function toPrintArea(row: RowBucket): PrintArea {
-  const sizes = [...row.sizes.values()].map(toSize);
+  // Stable sort: sizes that compare equal are the same bucket, so order among them never arises.
+  const sizes = [...row.sizes.values()].sort(byLargest).map(toSize);
   const [largest] = sizes;
   if (largest === undefined) {
     // Unreachable: a row is only created together with its first size.
@@ -98,6 +99,7 @@ function toPrintArea(row: RowBucket): PrintArea {
     height_px: largest.height_px,
     ...withAspectRatio(largest.width_px, largest.height_px),
     variant_count: sizes.reduce((sum, size) => sum + size.variant_count, 0),
+    ...(sizes.length > 1 ? { sizes } : {}),
   };
 }
 
@@ -109,6 +111,12 @@ function toSize(bucket: SizeBucket): PrintAreaSize {
     variant_count: bucket.variantIds.length,
     variant_ids: bucket.variantIds,
   };
+}
+
+/** Greater width first; equal widths by greater height. Scale is relative to width. */
+function byLargest(a: SizeBucket, b: SizeBucket): number {
+  if (a.width !== b.width) return b.width - a.width;
+  return b.height - a.height;
 }
 
 /** `{ aspect_ratio }` when it exists, `{}` otherwise, so an absent ratio is absent, not undefined. */

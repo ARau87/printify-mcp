@@ -133,3 +133,83 @@ describe('aspectRatio', () => {
     expect(row).not.toHaveProperty('aspect_ratio');
   });
 });
+
+describe('summarisePrintAreas with several sizes per position', () => {
+  it('headlines the largest size and lists every size with its variant ids', () => {
+    const rows = summarisePrintAreas([
+      variantWith(1, [at('front', 3600, 4800, 'dtg'), at('back', 4500, 5100, 'dtg')]),
+      variantWith(2, [at('front', 4500, 5100, 'dtg'), at('back', 4500, 5100, 'dtg')]),
+      variantWith(3, [at('front', 3600, 4800, 'dtg'), at('back', 4500, 5100, 'dtg')]),
+    ]);
+
+    expect(rows).toEqual([
+      {
+        position: 'front',
+        decoration_method: 'dtg',
+        width_px: 4500,
+        height_px: 5100,
+        aspect_ratio: 0.882,
+        variant_count: 3,
+        sizes: [
+          {
+            width_px: 4500,
+            height_px: 5100,
+            aspect_ratio: 0.882,
+            variant_count: 1,
+            variant_ids: [2],
+          },
+          {
+            width_px: 3600,
+            height_px: 4800,
+            aspect_ratio: 0.75,
+            variant_count: 2,
+            variant_ids: [1, 3],
+          },
+        ],
+      },
+      {
+        position: 'back',
+        decoration_method: 'dtg',
+        width_px: 4500,
+        height_px: 5100,
+        aspect_ratio: 0.882,
+        variant_count: 3,
+      },
+    ]);
+    expect(rows[1]).not.toHaveProperty('sizes');
+  });
+
+  it('lets a wider but shorter size win the headline', () => {
+    const [row] = summarisePrintAreas([
+      variantWith(1, [at('front', 3000, 6000, 'dtg')]),
+      variantWith(2, [at('front', 4000, 2000, 'dtg')]),
+    ]);
+
+    expect(row).toMatchObject({ width_px: 4000, height_px: 2000, aspect_ratio: 2 });
+    expect(row?.sizes?.map((size) => size.width_px)).toEqual([4000, 3000]);
+  });
+
+  it('breaks an equal width by the greater height', () => {
+    const [row] = summarisePrintAreas([
+      variantWith(1, [at('front', 4000, 2000, 'dtg')]),
+      variantWith(2, [at('front', 4000, 5000, 'dtg')]),
+      variantWith(3, [at('front', 4000, 3000, 'dtg')]),
+    ]);
+
+    expect(row).toMatchObject({ width_px: 4000, height_px: 5000 });
+    expect(row?.sizes?.map((size) => size.height_px)).toEqual([5000, 3000, 2000]);
+  });
+
+  it('keeps variant ids in catalog order within a size, not sorted', () => {
+    const [row] = summarisePrintAreas([
+      variantWith(30, [at('front', 100, 100, 'dtg')]),
+      variantWith(10, [at('front', 200, 200, 'dtg')]),
+      variantWith(20, [at('front', 100, 100, 'dtg')]),
+    ]);
+
+    expect(row?.sizes).toEqual([
+      { width_px: 200, height_px: 200, aspect_ratio: 1, variant_count: 1, variant_ids: [10] },
+      { width_px: 100, height_px: 100, aspect_ratio: 1, variant_count: 2, variant_ids: [30, 20] },
+    ]);
+  });
+});
