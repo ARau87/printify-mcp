@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   BLUEPRINT,
   BLUEPRINT_PROVIDERS,
+  PRINT_AREA_VARIANTS,
   PRINT_PROVIDER,
   PRINT_PROVIDERS,
   printProviderWith,
@@ -22,6 +23,7 @@ const PROVIDERS_PATH = '/v1/catalog/print_providers.json';
 const PROVIDER_PATH = '/v1/catalog/print_providers/3.json';
 const VARIANTS_PATH = '/v1/catalog/blueprints/3/print_providers/29/variants.json';
 const SHIPPING_PATH = '/v1/catalog/blueprints/3/print_providers/29/shipping.json';
+const PRINT_AREA_VARIANTS_PATH = '/v1/catalog/blueprints/5/print_providers/29/variants.json';
 
 /** The variants route answers by query: a route key cannot carry one. */
 const VARIANT_ROUTES: Routes = {
@@ -333,6 +335,140 @@ describe('list_variants', () => {
       blueprint_id: 3,
       print_provider_id: 29,
       colors: [],
+    });
+
+    expectToolError(result, { kind: 'validation' });
+    expect(api.requests).toEqual([]);
+  });
+});
+
+describe('get_print_areas', () => {
+  it('aggregates the placeholders into positions, with sizes only where they differ', async () => {
+    const { call, api } = await createTestServer({
+      routes: { [`GET ${PRINT_AREA_VARIANTS_PATH}`]: PRINT_AREA_VARIANTS },
+    });
+
+    const data = expectToolData(
+      await call('get_print_areas', { blueprint_id: 5, print_provider_id: 29 }),
+    );
+
+    expect(data).toEqual({
+      print_provider: { id: 3, title: 'DJ' },
+      variant_count: 4,
+      option_values: { color: ['White', 'Black'], size: ['S', 'XL'] },
+      print_areas: [
+        {
+          position: 'front',
+          decoration_method: 'dtg',
+          width_px: 4500,
+          height_px: 5100,
+          aspect_ratio: 0.882,
+          variant_count: 4,
+          sizes: [
+            {
+              width_px: 4500,
+              height_px: 5100,
+              aspect_ratio: 0.882,
+              variant_count: 2,
+              variant_ids: [18001, 18003],
+            },
+            {
+              width_px: 3600,
+              height_px: 4800,
+              aspect_ratio: 0.75,
+              variant_count: 2,
+              variant_ids: [18002, 18004],
+            },
+          ],
+        },
+        {
+          position: 'back',
+          decoration_method: 'dtg',
+          width_px: 4500,
+          height_px: 5100,
+          aspect_ratio: 0.882,
+          variant_count: 4,
+        },
+        {
+          position: 'left_sleeve',
+          decoration_method: 'dtg',
+          width_px: 1200,
+          height_px: 1200,
+          aspect_ratio: 1,
+          variant_count: 1,
+        },
+      ],
+    });
+    const areas = data['print_areas'] as Record<string, unknown>[];
+    expect(areas[1]).not.toHaveProperty('sizes');
+    expect(areas[2]).not.toHaveProperty('sizes');
+    expect(api.expectRequest('GET', PRINT_AREA_VARIANTS_PATH).query).toEqual({});
+  });
+
+  it('shares its cache entry with list_variants', async () => {
+    const { call, api } = await createTestServer({ routes: VARIANT_ROUTES });
+
+    await call('list_variants', { blueprint_id: 3, print_provider_id: 29 });
+    const data = expectToolData(
+      await call('get_print_areas', { blueprint_id: 3, print_provider_id: 29 }),
+    );
+
+    expect(data).toMatchObject({
+      variant_count: 3,
+      print_areas: [
+        {
+          position: 'back',
+          decoration_method: 'dtf',
+          width_px: 3153,
+          height_px: 3995,
+          variant_count: 3,
+        },
+        {
+          position: 'front',
+          decoration_method: 'embroidery',
+          width_px: 3153,
+          height_px: 3995,
+          variant_count: 3,
+        },
+      ],
+    });
+    api.expectRequest('GET', VARIANTS_PATH);
+  });
+
+  it('summarises an empty list as zero variants and no print areas', async () => {
+    const { call } = await createTestServer({
+      routes: { [`GET ${PRINT_AREA_VARIANTS_PATH}`]: { id: 3, title: 'DJ', variants: [] } },
+    });
+
+    const data = expectToolData(
+      await call('get_print_areas', { blueprint_id: 5, print_provider_id: 29 }),
+    );
+
+    expect(data).toEqual({
+      print_provider: { id: 3, title: 'DJ' },
+      variant_count: 0,
+      option_values: {},
+      print_areas: [],
+    });
+  });
+
+  it('reports an unknown blueprint or provider as a 404', async () => {
+    const { call } = await createTestServer({
+      routes: { [`GET ${PRINT_AREA_VARIANTS_PATH}`]: json(notFoundBody(), 404) },
+    });
+
+    const result = await call('get_print_areas', { blueprint_id: 5, print_provider_id: 29 });
+
+    expectToolError(result, { kind: 'http', status: 404 });
+  });
+
+  it('rejects an unknown input key before any request', async () => {
+    const { call, api } = await createTestServer({ routes: VARIANT_ROUTES });
+
+    const result = await call('get_print_areas', {
+      blueprint_id: 3,
+      print_provider_id: 29,
+      show_out_of_stock: true,
     });
 
     expectToolError(result, { kind: 'validation' });

@@ -8,6 +8,7 @@ import {
   type VariantList,
 } from '../printify/catalog.js';
 import { searchBlueprints } from './blueprint-search.js';
+import { summarisePrintAreas } from './print-areas.js';
 import { defineTool, type Tool, type ToolAnnotations } from './define.js';
 import { omitKeys } from './shape.js';
 import { groupShippingProfiles } from './shipping-profiles.js';
@@ -233,6 +234,39 @@ export const listVariantsTool = defineTool({
   },
 });
 
+export const getPrintAreasTool = defineTool({
+  name: 'get_print_areas',
+  toolset: 'catalog',
+  description:
+    'Summarises where artwork can go on a blueprint from one print provider and how big it must ' +
+    'be: each print position (front, back, sleeve …) with its decoration method, its printable ' +
+    'size in pixels and its aspect ratio, aggregated over every variant in stock, plus the ' +
+    'colors and sizes to choose variants from. Use it before create_product or ' +
+    'create_product_from_image to size and place artwork; list_variants gives the same ' +
+    'placeholders per variant. Placement: x and y run from 0 to 1 across the print area with ' +
+    '0.5/0.5 the centre; scale is the image width divided by the placeholder width, so 1 fills ' +
+    'the width. Artwork at least width_px wide at scale 1 avoids the low-resolution error (code ' +
+    "8203). When a position's size differs between variants, width_px and height_px are the " +
+    'largest and sizes lists each size with its variant_ids, so print_areas can give each group ' +
+    'its own placement.',
+  annotations: READ_ONLY,
+  input: z.strictObject({ blueprint_id: blueprintId, print_provider_id: printProviderId }),
+  handler: async (input, ctx) => {
+    const list = await ctx.catalog.variants(
+      input.blueprint_id,
+      input.print_provider_id,
+      { showOutOfStock: false },
+      ctx.signal,
+    );
+    return {
+      print_provider: { id: list.id, title: list.title },
+      variant_count: list.variants.length,
+      option_values: optionValues(list.variants),
+      print_areas: summarisePrintAreas(list.variants),
+    };
+  },
+});
+
 export const listPrintProvidersTool = defineTool({
   name: 'list_print_providers',
   toolset: 'catalog',
@@ -383,6 +417,7 @@ export const catalogTools: readonly Tool[] = [
   getBlueprintTool,
   listBlueprintProvidersTool,
   listVariantsTool,
+  getPrintAreasTool,
   getShippingInfoTool,
   listPrintProvidersTool,
   getPrintProviderTool,
@@ -410,7 +445,7 @@ function matchesOption(
 }
 
 /** Each option's distinct values, in the order Printify sends them. */
-function optionValues(variants: readonly Variant[]): Record<string, string[]> {
+export function optionValues(variants: readonly Variant[]): Record<string, string[]> {
   const values: Record<string, string[]> = {};
   for (const variant of variants) {
     for (const [option, value] of Object.entries(variant.options)) {
