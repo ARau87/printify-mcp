@@ -474,6 +474,17 @@ describe('get_print_areas', () => {
     expectToolError(result, { kind: 'validation' });
     expect(api.requests).toEqual([]);
   });
+
+  it('is pointed at by the list_variants and create_product_from_image descriptions', async () => {
+    const { mcp } = await createTestServer();
+
+    const { tools } = await mcp.listTools();
+
+    for (const name of ['list_variants', 'create_product_from_image']) {
+      const tool = tools.find((candidate) => candidate.name === name);
+      expect(tool?.description).toContain('get_print_areas');
+    }
+  });
 });
 
 describe('get_shipping_info', () => {

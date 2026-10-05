@@ -166,8 +166,9 @@ export const createProductFromImageTool = defineTool({
     'draft. Give the blueprint and print provider (from search_blueprints and ' +
     'list_blueprint_providers), one design per print position with its image and placement, ' +
     'optionally colors and sizes (names as list_variants shows them, any case; by default ' +
-    'every variant in stock), and the price in cents, optionally per size. Warns when an image ' +
-    'has fewer pixels than it is printed across; strict refuses instead. If the call fails ' +
+    'every variant in stock), and the price in cents, optionally per size. get_print_areas ' +
+    'shows the positions and their pixel sizes first. Warns when an image has fewer pixels ' +
+    'than it is printed across; strict refuses instead. If the call fails ' +
     'after uploading, the error lists the images under uploaded: retry with image.upload_id ' +
     'set to them rather than uploading again. If the error says the request may still have gone ' +
     'through, the product may exist: check list_products for it before retrying. Does not ' +

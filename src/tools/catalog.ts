@@ -186,7 +186,8 @@ export const listVariantsTool = defineTool({
     'blueprint. Each has the variant id that products and orders use, its options, and its ' +
     'print positions with their size in pixels. Filter with colors and sizes: exact names, ' +
     'ignoring case, and option_values lists every name. Only variants in stock are listed ' +
-    'unless show_out_of_stock is set; then every variant says whether it is in_stock.',
+    'unless show_out_of_stock is set; then every variant says whether it is in_stock. ' +
+    'get_print_areas summarises the print positions and their sizes across all variants.',
   annotations: READ_ONLY,
   input: z.strictObject({
     blueprint_id: blueprintId,
