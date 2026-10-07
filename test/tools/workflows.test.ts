@@ -395,11 +395,10 @@ describe('create_product_from_image', () => {
     expect(TOOLS_BY_TOOLSET.workflows.map((tool) => tool.name)).toEqual([TOOL]);
   });
 
-  it('does not name publish_product in next_step, because no such tool exists yet', async () => {
-    // The publishing toolset (#12) makes this fail on purpose: next_step should then name it.
-    expect(ALL_TOOLS.map((tool) => tool.name)).not.toContain('publish_product');
+  it('names publish_product in next_step, which the publishing toolset provides', async () => {
+    expect(ALL_TOOLS.map((tool) => tool.name)).toContain('publish_product');
     const { call } = await createTestServer({ routes: ROUTES });
     const data = expectToolData(await call(TOOL, RED_FRONT));
-    expect(data['next_step']).not.toContain('publish_product');
+    expect(data['next_step']).toContain('publish_product');
   });
 });

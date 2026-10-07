@@ -134,7 +134,8 @@ const STRICT_HINT =
   'strict out to create the product with a warning.';
 const NEXT_STEP =
   'The product is an unpublished draft in the shop. Show the user the mockups and ask whether ' +
-  'to change anything with update_product before it is published to the sales channel.';
+  'to change anything with update_product before it is published to the sales channel. When ' +
+  'the user is happy, publish_product sends it to the sales channel.';
 
 /** One distinct image of the call. Designs with the same source share one. */
 interface ImageSlot {

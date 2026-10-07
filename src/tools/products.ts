@@ -21,7 +21,7 @@ const READ_ONLY: ToolAnnotations = {
 
 // Letters and digits only: Printify ids are hex strings. apiPath URL-encodes anything else, so
 // "../orders" would become a request that cannot succeed; the regex makes it a validation error.
-const productId = z
+export const productId = z
   .string()
   .regex(/^[A-Za-z0-9]+$/, 'product_id must be letters and digits')
   .describe('The product id, e.g. from list_products.');
