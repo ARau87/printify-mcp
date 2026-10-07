@@ -23,8 +23,9 @@ export type MergeResult =
   { ok: true; variants: VariantBody[] } | { ok: false; unknownIds: number[] };
 
 export const LOCKED_HINT =
-  'Printify unlocks it when the sales channel reports the publishing result (succeeded or ' +
-  'failed). Wait and try again, or check the product in the Printify app.';
+  'Printify unlocks it when the sales channel reports the publishing result. On a connected ' +
+  'shop, wait and try again. On an API shop, call set_publishing_succeeded or ' +
+  'set_publishing_failed, then retry.';
 
 /**
  * The complete variant list an update must send: every current variant in its order, with the

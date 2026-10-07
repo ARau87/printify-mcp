@@ -440,7 +440,7 @@ describe('update_product', () => {
       kind: 'tool',
     });
     expect(error.message).toContain('is locked because it is being published');
-    expect(error.hint).toContain('publishing result');
+    expect(error.hint).toContain('set_publishing_succeeded');
     expect(api.requests.map((request) => request.method)).toEqual(['GET']);
   });
 
