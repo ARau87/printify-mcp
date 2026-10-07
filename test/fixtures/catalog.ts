@@ -210,3 +210,51 @@ export const SEARCH_BLUEPRINTS = [
     images: [],
   },
 ];
+
+/**
+ * Four variants whose `front` comes in two sizes (4500 × 5100 on S, 3600 × 4800 on XL), whose
+ * `back` is one size on all four, and one of which adds a `left_sleeve`.
+ */
+export const PRINT_AREA_VARIANTS = {
+  id: 3,
+  title: 'DJ',
+  variants: [
+    {
+      id: 18001,
+      title: 'White / S',
+      options: { color: 'White', size: 'S' },
+      placeholders: [
+        { position: 'front', decoration_method: 'dtg', height: 5100, width: 4500 },
+        { position: 'back', decoration_method: 'dtg', height: 5100, width: 4500 },
+      ],
+    },
+    {
+      id: 18002,
+      title: 'White / XL',
+      options: { color: 'White', size: 'XL' },
+      placeholders: [
+        { position: 'front', decoration_method: 'dtg', height: 4800, width: 3600 },
+        { position: 'back', decoration_method: 'dtg', height: 5100, width: 4500 },
+      ],
+    },
+    {
+      id: 18003,
+      title: 'Black / S',
+      options: { color: 'Black', size: 'S' },
+      placeholders: [
+        { position: 'front', decoration_method: 'dtg', height: 5100, width: 4500 },
+        { position: 'back', decoration_method: 'dtg', height: 5100, width: 4500 },
+      ],
+    },
+    {
+      id: 18004,
+      title: 'Black / XL',
+      options: { color: 'Black', size: 'XL' },
+      placeholders: [
+        { position: 'front', decoration_method: 'dtg', height: 4800, width: 3600 },
+        { position: 'back', decoration_method: 'dtg', height: 5100, width: 4500 },
+        { position: 'left_sleeve', decoration_method: 'dtg', height: 1200, width: 1200 },
+      ],
+    },
+  ],
+};
