@@ -100,9 +100,10 @@ Nothing here holds state. `ToolServices`, `src/cli.ts`, `test/support/harness.ts
    `create_order` unchanged, and `calculate_shipping` translates Printify's transitional keys into
    these names with their codes. Decided with the user on 2026-10-07.
 2. **The duplicate's id comes out of the 409 body.** `PrintifyApiError` gains `body`, the parsed
-   JSON of the failed response, and the request module reads `body.order.id` on a 409 or code 8503. The issue only said "returns the existing order id"; this is how. The field is never
-   redacted, logged or serialised: `src/tools/run.ts` copies the fields it reports by name, and the
-   warn line uses the message. Only `src/printify/orders.ts` reads it.
+   JSON of the failed response, and the request module reads `body.order.id` on a 409 or code 8503. The issue only said "returns the existing order id"; this is how. The field is not
+   redacted, so it is non-enumerable: `inspect`, `JSON.stringify` and a spread leave it out, the
+   warn line uses the message, and `src/tools/run.ts` copies the fields it reports by name. Only
+   `src/printify/orders.ts` reads it on purpose.
 3. **Line items are a plain `z.union` of three strict objects**, in the API's own shape, rather
    than a discriminated union with an extra `kind` field. The model copies what the docs and
    `get_order` show and the tool strips nothing. A line item that matches no shape is a
@@ -129,12 +130,12 @@ Nothing here holds state. `ToolServices`, `src/cli.ts`, `test/support/harness.ts
 
 | File                                 | Change                                                                        |
 | ------------------------------------ | ----------------------------------------------------------------------------- |
-| `src/printify/errors.ts`             | `PrintifyApiError.body`, `'an unexpected order response'`                     |
-| `src/printify/client.ts`             | Passes the parsed body into `httpError`                                       |
+| `src/printify/errors.ts`             | `PrintifyApiError.body` (non-enumerable), `'an unexpected order response'`    |
 | `src/printify/orders.ts`             | New: schemas, seven request functions, `existingOrderId`                      |
 | `src/tools/shipping-method.ts`       | New: name/code mapping, `parseShippingQuote`                                  |
 | `src/tools/order-summary.ts`         | New: `orderRow`, `summarizeOrder`                                             |
 | `src/tools/orders.ts`                | New: the seven tools and `ordersTools`                                        |
+| `src/tools/products.ts`              | Exports `printDetailsInput`, which the on-the-fly line item reuses            |
 | `src/tools/index.ts`                 | `orders: ordersTools`                                                         |
 | `.github/workflows/ci.yml`           | Read tools in the must-be-present loop, gated tools in the must-be-absent one |
 | `test/fixtures/orders.ts`            | New                                                                           |
@@ -144,12 +145,15 @@ Nothing here holds state. `ToolServices`, `src/cli.ts`, `test/support/harness.ts
 | `test/tools/order-summary.test.ts`   | New                                                                           |
 | `test/tools/orders.test.ts`          | New                                                                           |
 
-## `src/printify/errors.ts` and `client.ts`
+## `src/printify/errors.ts`
 
 `PrintifyErrorFields` gains `body?: unknown` and `PrintifyApiError` the readonly field `body:
-unknown`. `httpError` sets it to `body?.value`, the JSON it already parses for the envelope, so a
-non-JSON response leaves it `undefined`. Timeout, network and limiter errors leave it `undefined`.
-`invalidResponseError`'s problem union gains `'an unexpected order response'`.
+unknown`, defined with `Object.defineProperty` as non-enumerable so the existing redaction tests,
+which `inspect` the error, still see no unredacted text. `httpError` sets it to `body?.value`,
+the JSON it already parses for the envelope, so a non-JSON response leaves it `undefined`.
+Timeout, network and limiter errors leave it `undefined`. `invalidResponseError`'s problem union
+gains `'an unexpected order response'`. `client.ts` already passes the parsed body in and needs
+no change.
 
 ## `src/printify/orders.ts`
 
@@ -418,7 +422,8 @@ the openapi 8503 example with `order: { id, external_id }`.
 ### `test/printify/errors.test.ts`
 
 `httpError` sets `body` to the parsed JSON for a JSON error response, and leaves it `undefined`
-for a non-JSON one; `timeoutError` and `networkError` leave it `undefined`.
+for a non-JSON one; `timeoutError` leaves it `undefined`. `inspect`, `JSON.stringify` and
+`Object.keys` do not show it.
 
 ### `test/printify/orders.test.ts`
 
@@ -467,9 +472,9 @@ Through the harness with the default tools, with `ORDERS_ON = { PRINTIFY_ENABLE_
   conflict body gives a normal result with `created: false` and the existing id, no `isError`
   (the issue's second criterion); a missing `external_id`, a line item matching no shape and
   `shipping_method: 'printify_express'` are validation errors with no request; `economy` with an
-  on-the-fly item is a `tool` refusal with no request; a never-answering create (`never()`)
-  times out with the "may still have gone through" hint, asserted after `vi.waitUntil` sees the
-  request.
+  on-the-fly item is a `tool` refusal with no request; a create whose connection fails
+  (`fails()`, since the harness timeout is a fixed 30 s) carries the "may still have gone
+  through" hint, asserted after `vi.waitUntil` sees the request.
 - `create_express_order`: sends `shipping_method: 3`, returns two orders with their
   `fulfilment_type`; an address without `phone` is a validation error with no request; a SKU
   line item is accepted and an on-the-fly one rejected; the 409 path.
