@@ -100,7 +100,8 @@ const printAreaInput = z.strictObject({
   background: z.string().optional().describe('A background colour as a hex code, e.g. #ffffff.'),
 });
 
-const printDetailsInput = z.strictObject({
+/** Shared with the order tools: an on-the-fly line item takes the same print details. */
+export const printDetailsInput = z.strictObject({
   print_on_side: z
     .enum(['regular', 'mirror', 'off'])
     .optional()

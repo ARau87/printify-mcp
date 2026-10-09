@@ -53,7 +53,8 @@ jobs:
           grep -q '"name":"printify-mcp"' <<<"$output"
           grep -q '"name":"list_shops"' <<<"$output"
           # Gated tools must stay off without their flag. `! grep` would not fail under errexit.
-          for tool in disconnect_shop archive_upload delete_product; do
+          for tool in disconnect_shop archive_upload delete_product \
+            create_order create_express_order send_order_to_production cancel_order; do
             if grep -q "\"name\":\"$tool\"" <<<"$output"; then
               echo "$tool is registered without its flag" >&2
               exit 1
@@ -69,7 +70,8 @@ jobs:
             list_products get_product get_product_gpsr create_product update_product \
             create_product_from_image \
             publish_product set_publishing_succeeded set_publishing_failed \
-            set_product_unpublished; do
+            set_product_unpublished \
+            list_orders get_order calculate_shipping; do
             grep -q "\"name\":\"$tool\"" <<<"$output"
           done
       - name: Check --version
