@@ -18,6 +18,8 @@ export interface PrintifyErrorFields extends Route {
   requestId?: string | undefined;
   /** Set only by the rate limiter's fail-fast error: the request was not sent. */
   retryAfterSeconds?: number | undefined;
+  /** The parsed JSON body of a non-2xx response, for a caller that needs more than the fields. */
+  body?: unknown;
 }
 
 /** Every failure of a Printify request. `kind` says which. The hint is advice for the assistant. */
@@ -32,6 +34,12 @@ export class PrintifyApiError extends Error {
   readonly reason: string | undefined;
   readonly requestId: string | undefined;
   readonly retryAfterSeconds: number | undefined;
+  /**
+   * The parsed JSON body of a non-2xx response, `undefined` for every other error. It is not
+   * redacted, so it is non-enumerable: `inspect`, a spread and JSON leave it out, and the registry
+   * reports the fields above by name. Only a caller that reads `error.body` on purpose sees it.
+   */
+  declare readonly body: unknown;
   readonly hint: string | undefined;
 
   constructor(message: string, fields: PrintifyErrorFields, options?: ErrorOptions) {
@@ -45,6 +53,7 @@ export class PrintifyApiError extends Error {
     this.reason = fields.reason;
     this.requestId = fields.requestId;
     this.retryAfterSeconds = fields.retryAfterSeconds;
+    Object.defineProperty(this, 'body', { value: fields.body, enumerable: false, writable: false });
     this.hint = hintFor(this);
   }
 }
@@ -123,6 +132,7 @@ export function httpError(
     printifyMessage,
     reason,
     requestId,
+    body: body?.value,
   });
 }
 
@@ -153,7 +163,8 @@ export function invalidResponseError(
     | 'an unexpected shop list'
     | 'an unexpected catalog response'
     | 'an unexpected uploads response'
-    | 'an unexpected product response',
+    | 'an unexpected product response'
+    | 'an unexpected order response',
 ): PrintifyApiError {
   return new PrintifyApiError(
     `${route.method} ${route.path} returned HTTP ${String(status)} with ${problem}`,
