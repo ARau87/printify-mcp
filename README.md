@@ -22,9 +22,11 @@ publish them to your store.
 1. **Create a Personal Access Token** in Printify under **My Profile → Connections** and pick its
    scopes. For everything this release offers, select `shops.read`, `catalog.read`,
    `print_providers.read`, `uploads.read`, `uploads.write`, `products.read`, `products.write`,
-   `orders.read` and `orders.write`. Leave out the three `.write` scopes for a read-only setup; the
-   mapping per toolset is under [Token scopes by toolset](#token-scopes-by-toolset). Copy the token
-   now: Printify shows it once, and it expires after one year.
+   `orders.read` and `orders.write`. For a setup that cannot change anything, leave out
+   `uploads.write` and `products.write`; `orders.write` stays, because the shipping quote in
+   `calculate_shipping` is a write call to Printify even though it creates nothing. The mapping per
+   toolset is under [Token scopes by toolset](#token-scopes-by-toolset). Copy the token now:
+   Printify shows it once, and it expires after one year.
 2. **Add the server to your client.** With Claude Code:
 
    ```bash
