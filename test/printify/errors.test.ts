@@ -183,6 +183,17 @@ describe('httpError', () => {
     }
     expect(error.reason).toBe('token [redacted] for [redacted]');
   });
+
+  it('keeps the parsed body for callers, hidden from inspection and spreads', () => {
+    const body = { status: 'error', code: 8503, order: { id: 'dup1' }, note: 'Jane Doe' };
+    const error = httpError(PRODUCTS, 409, { value: body }, null);
+    expect(error.body).toEqual(body);
+    expect(inspect(error)).not.toContain('Jane Doe');
+    expect(JSON.stringify(error)).not.toContain('Jane Doe');
+    expect(Object.keys(error)).not.toContain('body');
+    expect(httpError(PRODUCTS, 502, undefined, null).body).toBeUndefined();
+    expect(timeoutError(PRODUCTS, 30000).body).toBeUndefined();
+  });
 });
 
 describe('timeoutError', () => {
