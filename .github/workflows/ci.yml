@@ -36,6 +36,7 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
+      - run: npm run docs:tools -- --check
       - name: Smoke-run the built server
         env:
           PRINTIFY_API_TOKEN: smoke-test-token
