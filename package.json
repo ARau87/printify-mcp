@@ -13,6 +13,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
+    "docs:tools": "npm run build && node scripts/docs-tools.js",
     "dev": "tsc -p tsconfig.build.json --watch",
     "typecheck": "tsc --noEmit",
     "lint": "eslint . && prettier --check .",

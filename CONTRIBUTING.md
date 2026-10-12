@@ -246,3 +246,18 @@ Test through the harness with the default tools, so every test goes through `ALL
 that was never wired in fails its own tests. Pass `tools` only to add a fixture tool next to the
 real ones, e.g. `tools: [...ALL_TOOLS, getShopId]`. `test/tools/shops.test.ts` is a complete
 example, gated tool included.
+
+### Document it
+
+The tool table in `README.md` is generated. After adding, renaming or re-describing a tool, run
+`npm run docs:tools` and commit the README with your change; CI runs `npm run docs:tools -- --check`
+and fails when the table is stale.
+
+The table shows each tool's **first sentence**, so make the first sentence of a description a
+complete statement of what the tool does: start with a capitalised verb, end with a period, and
+keep it under about 300 characters. A guard in `test/tools/reference.test.ts` enforces the shape.
+Abbreviations such as "e.g." are fine mid-sentence.
+
+The environment-variable and scope tables in the README are hand-written. Update them when
+`src/config.ts` gains or changes a variable (the `--help` text in `src/cli.ts` lists them too), or
+when a toolset starts calling endpoints that need another scope.
